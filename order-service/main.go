@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -10,7 +11,7 @@ import (
 	"google.golang.org/grpc"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	
+
 	pb "order-service/orders"
 )
 
@@ -19,11 +20,9 @@ type server struct {
 	db *mongo.Collection
 }
 
-// SendPacket handles a single incoming packet
 func (s *server) SendPacket(ctx context.Context, in *pb.DataPacket) (*pb.Response, error) {
 	log.Printf("Received packet: %s from %s", in.Payload, in.ClientId)
 
-	// Persist to MongoDB
 	_, err := s.db.InsertOne(ctx, in)
 	if err != nil {
 		return nil, err
@@ -35,16 +34,34 @@ func (s *server) SendPacket(ctx context.Context, in *pb.DataPacket) (*pb.Respons
 	}, nil
 }
 
-// StreamDisturbance handles high-volume incoming streams (Stress Test)
+func (s *server) StressTest(ctx context.Context, in *pb.StressTestRequest) (*pb.Response, error) {
+	startTime := time.Now()
+	for i := int32(0); i < in.Count; i++ {
+		packet := &pb.DataPacket{
+			ClientId:       in.ClientId,
+			Payload:        in.Payload,
+			SequenceNumber: i,
+		}
+		if _, err := s.db.InsertOne(ctx, packet); err != nil {
+			return nil, err
+		}
+		if i%100 == 0 {
+			log.Printf("Stress test: processed %d / %d packets", i, in.Count)
+		}
+	}
+	return &pb.Response{
+		Message: fmt.Sprintf("%d packets processed in %s", in.Count, time.Since(startTime)),
+		Success: true,
+	}, nil
+}
+
 func (s *server) StreamDisturbance(stream pb.OrderService_StreamDisturbanceServer) error {
 	var packetCount int32
 	startTime := time.Now()
 
 	for {
-		// Read from the stream
 		_, err := stream.Recv()
 		if err == io.EOF {
-			// Stream finished
 			return stream.SendAndClose(&pb.Response{
 				Message: string(packetCount) + " packets processed in " + time.Since(startTime).String(),
 				Success: true,
@@ -55,8 +72,6 @@ func (s *server) StreamDisturbance(stream pb.OrderService_StreamDisturbanceServe
 		}
 
 		packetCount++
-		// Tech Lead Note: In a real scenario, we might process these in batches 
-		// to avoid overloading the DB.
 		if packetCount % 100 == 0 {
 			log.Printf("Stress test: Received %d packets so far...", packetCount)
 		}
@@ -64,7 +79,6 @@ func (s *server) StreamDisturbance(stream pb.OrderService_StreamDisturbanceServe
 }
 
 func main() {
-	// 1. Connect to MongoDB
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -74,7 +88,6 @@ func main() {
 	}
 	collection := client.Database("order_db").Collection("packets")
 
-	// 2. Setup gRPC Server
 	lis, err := net.Listen("tcp", ":50051")
 	if err != nil {
 		log.Fatalf("failed to listen: %v", err)

@@ -3,7 +3,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { DataPacket, Response } from './service_pb.js';
+import { DataPacket, Response, StressTestRequest } from './service_pb.js';
 import { MethodKind } from '@bufbuild/protobuf';
 
 /**
@@ -33,6 +33,17 @@ export const OrderService = {
       I: DataPacket,
       O: Response,
       kind: MethodKind.ClientStreaming,
+    },
+    /**
+     * Unary stress test - backend generates and processes N packets
+     *
+     * @generated from rpc orders.OrderService.StressTest
+     */
+    stressTest: {
+      name: 'StressTest',
+      I: StressTestRequest,
+      O: Response,
+      kind: MethodKind.Unary,
     },
   },
 } as const;

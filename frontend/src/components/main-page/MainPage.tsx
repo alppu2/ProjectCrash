@@ -2,7 +2,7 @@ import usePacketSender from './usePacketSender';
 import './MainPage.css';
 
 function MainPage() {
-  const { form, handleChange, handleSend, busy, progress, result, error, isStreaming, packetCount } =
+  const { form, handleChange, handleSend, busy, result, error, isStreaming, packetCount } =
     usePacketSender();
 
   return (
@@ -61,10 +61,6 @@ function MainPage() {
             : `Send${packetCount > 1 ? ` ${packetCount} Packets` : ' Packet'}`}
         </button>
       </form>
-
-      {isStreaming && (busy || result || error) && (
-        <p className="progress">Sent {progress} / {packetCount}</p>
-      )}
 
       {result && (
         <div className={`response ${result.success ? 'success' : 'failure'}`}>

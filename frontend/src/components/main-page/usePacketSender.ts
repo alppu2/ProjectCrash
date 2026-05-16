@@ -23,7 +23,6 @@ function usePacketSender() {
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState(0);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -48,7 +47,6 @@ function usePacketSender() {
       setBusy(true);
       setResult(null);
       setError(null);
-      setProgress(0);
 
       try {
         if (packetCount === 1) {
@@ -59,11 +57,10 @@ function usePacketSender() {
           });
           if (mountedRef.current) setResult({ message: res.message, success: res.success });
         } else {
-          const res = await client.streamDisturbance(async function* () {
-            for (let i = 0; i < packetCount; i++) {
-              yield { clientId: form.clientId, payload: form.payload, sequenceNumber: i };
-              if (mountedRef.current) setProgress(i + 1);
-            }
+          const res = await client.stressTest({
+            clientId: form.clientId,
+            payload: form.payload,
+            count: packetCount,
           });
           if (mountedRef.current) setResult({ message: res.message, success: res.success });
         }
@@ -76,7 +73,7 @@ function usePacketSender() {
     [form, packetCount, busy]
   );
 
-  return { form, handleChange, handleSend, busy, progress, result, error, isStreaming, packetCount };
+  return { form, handleChange, handleSend, busy, result, error, isStreaming, packetCount };
 }
 
 export default usePacketSender;

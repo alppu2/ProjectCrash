@@ -6,5 +6,4 @@ const transport = createGrpcWebTransport({
   baseUrl: 'http://localhost:8080',
 });
 
-// The client is what we use in our components
 export const client = createPromiseClient(OrderService, transport);

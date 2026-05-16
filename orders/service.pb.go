@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v7.34.1
-// source: proto/service.proto
+// source: service.proto
 
 package orders
 
@@ -32,7 +32,7 @@ type DataPacket struct {
 
 func (x *DataPacket) Reset() {
 	*x = DataPacket{}
-	mi := &file_proto_service_proto_msgTypes[0]
+	mi := &file_service_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -44,7 +44,7 @@ func (x *DataPacket) String() string {
 func (*DataPacket) ProtoMessage() {}
 
 func (x *DataPacket) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_service_proto_msgTypes[0]
+	mi := &file_service_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -57,7 +57,7 @@ func (x *DataPacket) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataPacket.ProtoReflect.Descriptor instead.
 func (*DataPacket) Descriptor() ([]byte, []int) {
-	return file_proto_service_proto_rawDescGZIP(), []int{0}
+	return file_service_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *DataPacket) GetClientId() string {
@@ -91,7 +91,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_proto_service_proto_msgTypes[1]
+	mi := &file_service_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -103,7 +103,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_proto_service_proto_msgTypes[1]
+	mi := &file_service_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -116,7 +116,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_proto_service_proto_rawDescGZIP(), []int{1}
+	return file_service_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *Response) GetMessage() string {
@@ -133,11 +133,71 @@ func (x *Response) GetSuccess() bool {
 	return false
 }
 
-var File_proto_service_proto protoreflect.FileDescriptor
+type StressTestRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ClientId      string                 `protobuf:"bytes,1,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	Payload       string                 `protobuf:"bytes,2,opt,name=payload,proto3" json:"payload,omitempty"`
+	Count         int32                  `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
 
-const file_proto_service_proto_rawDesc = "" +
+func (x *StressTestRequest) Reset() {
+	*x = StressTestRequest{}
+	mi := &file_service_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StressTestRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StressTestRequest) ProtoMessage() {}
+
+func (x *StressTestRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_service_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StressTestRequest.ProtoReflect.Descriptor instead.
+func (*StressTestRequest) Descriptor() ([]byte, []int) {
+	return file_service_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *StressTestRequest) GetClientId() string {
+	if x != nil {
+		return x.ClientId
+	}
+	return ""
+}
+
+func (x *StressTestRequest) GetPayload() string {
+	if x != nil {
+		return x.Payload
+	}
+	return ""
+}
+
+func (x *StressTestRequest) GetCount() int32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+var File_service_proto protoreflect.FileDescriptor
+
+const file_service_proto_rawDesc = "" +
 	"\n" +
-	"\x13proto/service.proto\x12\x06orders\"l\n" +
+	"\rservice.proto\x12\x06orders\"l\n" +
 	"\n" +
 	"DataPacket\x12\x1b\n" +
 	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x18\n" +
@@ -145,62 +205,71 @@ const file_proto_service_proto_rawDesc = "" +
 	"\x0fsequence_number\x18\x03 \x01(\x05R\x0esequenceNumber\">\n" +
 	"\bResponse\x12\x18\n" +
 	"\amessage\x18\x01 \x01(\tR\amessage\x12\x18\n" +
-	"\asuccess\x18\x02 \x01(\bR\asuccess2\x7f\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess\"`\n" +
+	"\x11StressTestRequest\x12\x1b\n" +
+	"\tclient_id\x18\x01 \x01(\tR\bclientId\x12\x18\n" +
+	"\apayload\x18\x02 \x01(\tR\apayload\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\x05R\x05count2\xba\x01\n" +
 	"\fOrderService\x122\n" +
 	"\n" +
 	"SendPacket\x12\x12.orders.DataPacket\x1a\x10.orders.Response\x12;\n" +
-	"\x11StreamDisturbance\x12\x12.orders.DataPacket\x1a\x10.orders.Response(\x01B\n" +
+	"\x11StreamDisturbance\x12\x12.orders.DataPacket\x1a\x10.orders.Response(\x01\x129\n" +
+	"\n" +
+	"StressTest\x12\x19.orders.StressTestRequest\x1a\x10.orders.ResponseB\n" +
 	"Z\b./ordersb\x06proto3"
 
 var (
-	file_proto_service_proto_rawDescOnce sync.Once
-	file_proto_service_proto_rawDescData []byte
+	file_service_proto_rawDescOnce sync.Once
+	file_service_proto_rawDescData []byte
 )
 
-func file_proto_service_proto_rawDescGZIP() []byte {
-	file_proto_service_proto_rawDescOnce.Do(func() {
-		file_proto_service_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_proto_service_proto_rawDesc), len(file_proto_service_proto_rawDesc)))
+func file_service_proto_rawDescGZIP() []byte {
+	file_service_proto_rawDescOnce.Do(func() {
+		file_service_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)))
 	})
-	return file_proto_service_proto_rawDescData
+	return file_service_proto_rawDescData
 }
 
-var file_proto_service_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
-var file_proto_service_proto_goTypes = []any{
-	(*DataPacket)(nil), // 0: orders.DataPacket
-	(*Response)(nil),   // 1: orders.Response
+var file_service_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_service_proto_goTypes = []any{
+	(*DataPacket)(nil),        // 0: orders.DataPacket
+	(*Response)(nil),          // 1: orders.Response
+	(*StressTestRequest)(nil), // 2: orders.StressTestRequest
 }
-var file_proto_service_proto_depIdxs = []int32{
+var file_service_proto_depIdxs = []int32{
 	0, // 0: orders.OrderService.SendPacket:input_type -> orders.DataPacket
 	0, // 1: orders.OrderService.StreamDisturbance:input_type -> orders.DataPacket
-	1, // 2: orders.OrderService.SendPacket:output_type -> orders.Response
-	1, // 3: orders.OrderService.StreamDisturbance:output_type -> orders.Response
-	2, // [2:4] is the sub-list for method output_type
-	0, // [0:2] is the sub-list for method input_type
+	2, // 2: orders.OrderService.StressTest:input_type -> orders.StressTestRequest
+	1, // 3: orders.OrderService.SendPacket:output_type -> orders.Response
+	1, // 4: orders.OrderService.StreamDisturbance:output_type -> orders.Response
+	1, // 5: orders.OrderService.StressTest:output_type -> orders.Response
+	3, // [3:6] is the sub-list for method output_type
+	0, // [0:3] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
 }
 
-func init() { file_proto_service_proto_init() }
-func file_proto_service_proto_init() {
-	if File_proto_service_proto != nil {
+func init() { file_service_proto_init() }
+func file_service_proto_init() {
+	if File_service_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_service_proto_rawDesc), len(file_proto_service_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_service_proto_rawDesc), len(file_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_proto_service_proto_goTypes,
-		DependencyIndexes: file_proto_service_proto_depIdxs,
-		MessageInfos:      file_proto_service_proto_msgTypes,
+		GoTypes:           file_service_proto_goTypes,
+		DependencyIndexes: file_service_proto_depIdxs,
+		MessageInfos:      file_service_proto_msgTypes,
 	}.Build()
-	File_proto_service_proto = out.File
-	file_proto_service_proto_goTypes = nil
-	file_proto_service_proto_depIdxs = nil
+	File_service_proto = out.File
+	file_service_proto_goTypes = nil
+	file_service_proto_depIdxs = nil
 }

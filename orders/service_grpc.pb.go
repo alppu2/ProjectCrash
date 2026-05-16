@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v7.34.1
-// source: proto/service.proto
+// source: service.proto
 
 package orders
 
@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	OrderService_SendPacket_FullMethodName        = "/orders.OrderService/SendPacket"
 	OrderService_StreamDisturbance_FullMethodName = "/orders.OrderService/StreamDisturbance"
+	OrderService_StressTest_FullMethodName        = "/orders.OrderService/StressTest"
 )
 
 // OrderServiceClient is the client API for OrderService service.
@@ -31,6 +32,8 @@ type OrderServiceClient interface {
 	SendPacket(ctx context.Context, in *DataPacket, opts ...grpc.CallOption) (*Response, error)
 	// Client-to-server streaming for stress testing
 	StreamDisturbance(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DataPacket, Response], error)
+	// Unary stress test - backend generates and processes N packets
+	StressTest(ctx context.Context, in *StressTestRequest, opts ...grpc.CallOption) (*Response, error)
 }
 
 type orderServiceClient struct {
@@ -64,6 +67,16 @@ func (c *orderServiceClient) StreamDisturbance(ctx context.Context, opts ...grpc
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OrderService_StreamDisturbanceClient = grpc.ClientStreamingClient[DataPacket, Response]
 
+func (c *orderServiceClient) StressTest(ctx context.Context, in *StressTestRequest, opts ...grpc.CallOption) (*Response, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(Response)
+	err := c.cc.Invoke(ctx, OrderService_StressTest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // OrderServiceServer is the server API for OrderService service.
 // All implementations must embed UnimplementedOrderServiceServer
 // for forward compatibility.
@@ -72,6 +85,8 @@ type OrderServiceServer interface {
 	SendPacket(context.Context, *DataPacket) (*Response, error)
 	// Client-to-server streaming for stress testing
 	StreamDisturbance(grpc.ClientStreamingServer[DataPacket, Response]) error
+	// Unary stress test - backend generates and processes N packets
+	StressTest(context.Context, *StressTestRequest) (*Response, error)
 	mustEmbedUnimplementedOrderServiceServer()
 }
 
@@ -87,6 +102,9 @@ func (UnimplementedOrderServiceServer) SendPacket(context.Context, *DataPacket) 
 }
 func (UnimplementedOrderServiceServer) StreamDisturbance(grpc.ClientStreamingServer[DataPacket, Response]) error {
 	return status.Error(codes.Unimplemented, "method StreamDisturbance not implemented")
+}
+func (UnimplementedOrderServiceServer) StressTest(context.Context, *StressTestRequest) (*Response, error) {
+	return nil, status.Error(codes.Unimplemented, "method StressTest not implemented")
 }
 func (UnimplementedOrderServiceServer) mustEmbedUnimplementedOrderServiceServer() {}
 func (UnimplementedOrderServiceServer) testEmbeddedByValue()                      {}
@@ -134,6 +152,24 @@ func _OrderService_StreamDisturbance_Handler(srv interface{}, stream grpc.Server
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type OrderService_StreamDisturbanceServer = grpc.ClientStreamingServer[DataPacket, Response]
 
+func _OrderService_StressTest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(StressTestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(OrderServiceServer).StressTest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: OrderService_StressTest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(OrderServiceServer).StressTest(ctx, req.(*StressTestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // OrderService_ServiceDesc is the grpc.ServiceDesc for OrderService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -145,6 +181,10 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 			MethodName: "SendPacket",
 			Handler:    _OrderService_SendPacket_Handler,
 		},
+		{
+			MethodName: "StressTest",
+			Handler:    _OrderService_StressTest_Handler,
+		},
 	},
 	Streams: []grpc.StreamDesc{
 		{
@@ -153,5 +193,5 @@ var OrderService_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "proto/service.proto",
+	Metadata: "service.proto",
 }
