@@ -1,35 +1,9 @@
-import useSendPacket from './useSendPacket';
-import useStreamDisturbance from './useStreamDisturbance';
+import usePacketSender from './usePacketSender';
 import './MainPage.css';
 
 function MainPage() {
-  const { form, response, loading, error, handleChange, handleSubmit } =
-    useSendPacket();
-
-  const packetCount = parseInt(form.packetCount, 10) || 1;
-
-  const {
-    progress,
-    streaming,
-    result: streamResult,
-    error: streamError,
-    startStream,
-  } = useStreamDisturbance(form.clientId, form.payload, packetCount);
-
-  const isStreaming = packetCount > 1;
-  const busy = loading || streaming;
-
-  function handleSend(e: React.FormEvent) {
-    if (isStreaming) {
-      e.preventDefault();
-      startStream();
-    } else {
-      handleSubmit(e);
-    }
-  }
-
-  const activeResult = isStreaming ? streamResult : response;
-  const activeError = isStreaming ? streamError : error;
+  const { form, handleChange, handleSend, busy, progress, result, error, isStreaming, packetCount } =
+    usePacketSender();
 
   return (
     <section id="center">
@@ -88,21 +62,21 @@ function MainPage() {
         </button>
       </form>
 
-      {isStreaming && (streaming || streamResult || streamError) && (
+      {isStreaming && (busy || result || error) && (
         <p className="progress">Sent {progress} / {packetCount}</p>
       )}
 
-      {activeResult && (
-        <div className={`response ${activeResult.success ? 'success' : 'failure'}`}>
-          <strong>{activeResult.success ? 'Success' : 'Failed'}</strong>
-          <span>{activeResult.message}</span>
+      {result && (
+        <div className={`response ${result.success ? 'success' : 'failure'}`}>
+          <strong>{result.success ? 'Success' : 'Failed'}</strong>
+          <span>{result.message}</span>
         </div>
       )}
 
-      {activeError && (
+      {error && (
         <div className="response failure">
           <strong>Error</strong>
-          <span>{activeError}</span>
+          <span>{error}</span>
         </div>
       )}
     </section>
