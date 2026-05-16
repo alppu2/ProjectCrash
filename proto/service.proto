@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package orders;
+option go_package = "./orders";
+
+service OrderService {
+  // Simple request-response
+  rpc SendPacket (DataPacket) returns (Response);
+  
+  // Client-to-server streaming for stress testing
+  rpc StreamDisturbance (stream DataPacket) returns (Response);
+}
+
+message DataPacket {
+  string client_id = 1;
+  string payload = 2;
+  int32 sequence_number = 3;
+}
+
+message Response {
+  string message = 1;
+  bool success = 2;
+}

@@ -1,0 +1,58 @@
+services:
+  # (Go or Node.js gRPC-tuella
+  order-service:
+    build:
+      context: .
+      dockerfile: order-service/Dockerfile
+    container_name: order-service
+    networks:
+      - micro-network
+    depends_on:
+      - mongodb
+      - rabbitmq
+
+  # inventory-service:
+  #   build: ./inventory-service
+  #   container_name: inventory-service
+  #   networks:
+  #     - micro-network
+  #   depends_on:
+  #     - rabbitmq
+
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    networks:
+      - micro-network
+    volumes:
+      - mongo-data:/data/db
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    networks:
+      - micro-network
+
+  envoy:
+    image: envoyproxy/envoy:v1.25-latest
+    container_name: envoy-proxy
+    volumes:
+      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml
+    ports:
+      - "8080:8080"
+    networks:
+      - micro-network
+    depends_on:
+      - order-service
+
+networks:
+  micro-network:
+    driver: bridge
+
+volumes:
+  mongo-data:
