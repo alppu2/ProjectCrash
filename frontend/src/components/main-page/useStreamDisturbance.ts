@@ -6,7 +6,7 @@ interface StreamResult {
   success: boolean;
 }
 
-function useStreamDisturbance(clientId: string, payload: string) {
+function useStreamDisturbance(clientId: string, payload: string, packetCount: number) {
   const [progress, setProgress] = useState(0);
   const [streaming, setStreaming] = useState(false);
   const [result, setResult] = useState<StreamResult | null>(null);
@@ -30,7 +30,7 @@ function useStreamDisturbance(clientId: string, payload: string) {
 
     try {
       const res = await client.streamDisturbance(async function* () {
-        for (let i = 0; i < 1000; i++) {
+        for (let i = 0; i < packetCount; i++) {
           yield { clientId, payload, sequenceNumber: i };
           if (mountedRef.current) setProgress(i + 1);
         }
@@ -41,7 +41,7 @@ function useStreamDisturbance(clientId: string, payload: string) {
     } finally {
       if (mountedRef.current) setStreaming(false);
     }
-  }, [clientId, payload, streaming]);
+  }, [clientId, payload, packetCount, streaming]);
 
   return { progress, streaming, result, error, startStream };
 }

@@ -5,6 +5,7 @@ interface FormState {
   clientId: string;
   payload: string;
   sequenceNumber: string;
+  packetCount: string;
 }
 
 interface ResponseState {
@@ -17,6 +18,7 @@ function useSendPacket() {
     clientId: '',
     payload: '',
     sequenceNumber: '0',
+    packetCount: '1',
   });
   const [response, setResponse] = useState<ResponseState | null>(null);
   const [loading, setLoading] = useState(false);

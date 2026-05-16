@@ -1,10 +1,12 @@
 import useSendPacket from './useSendPacket';
 import useStreamDisturbance from './useStreamDisturbance';
-import '../../App.css';
+import './MainPage.css';
 
 function MainPage() {
   const { form, response, loading, error, handleChange, handleSubmit } =
     useSendPacket();
+
+  const packetCount = parseInt(form.packetCount, 10) || 1;
 
   const {
     progress,
@@ -12,12 +14,27 @@ function MainPage() {
     result: streamResult,
     error: streamError,
     startStream,
-  } = useStreamDisturbance(form.clientId, form.payload);
+  } = useStreamDisturbance(form.clientId, form.payload, packetCount);
+
+  const isStreaming = packetCount > 1;
+  const busy = loading || streaming;
+
+  function handleSend(e: React.FormEvent) {
+    if (isStreaming) {
+      e.preventDefault();
+      startStream();
+    } else {
+      handleSubmit(e);
+    }
+  }
+
+  const activeResult = isStreaming ? streamResult : response;
+  const activeError = isStreaming ? streamError : error;
 
   return (
     <section id="center">
       <h1>Send Packet</h1>
-      <form className="packet-form" onSubmit={handleSubmit}>
+      <form className="packet-form" onSubmit={handleSend}>
         <label>
           Client ID
           <input
@@ -51,48 +68,43 @@ function MainPage() {
             required
           />
         </label>
-        <button type="submit" disabled={loading}>
-          {loading ? 'Sending…' : 'Send Packet'}
+        <label>
+          Packet Count
+          <input
+            name="packetCount"
+            type="number"
+            value={form.packetCount}
+            onChange={handleChange}
+            min={1}
+            required
+          />
+        </label>
+        <button type="submit" disabled={busy}>
+          {busy
+            ? isStreaming
+              ? 'Streaming…'
+              : 'Sending…'
+            : `Send${packetCount > 1 ? ` ${packetCount} Packets` : ' Packet'}`}
         </button>
       </form>
 
-      {response && (
-        <div className={`response ${response.success ? 'success' : 'failure'}`}>
-          <strong>{response.success ? 'Success' : 'Failed'}</strong>
-          <span>{response.message}</span>
+      {isStreaming && (streaming || streamResult || streamError) && (
+        <p className="progress">Sent {progress} / {packetCount}</p>
+      )}
+
+      {activeResult && (
+        <div className={`response ${activeResult.success ? 'success' : 'failure'}`}>
+          <strong>{activeResult.success ? 'Success' : 'Failed'}</strong>
+          <span>{activeResult.message}</span>
         </div>
       )}
 
-      {error && (
+      {activeError && (
         <div className="response failure">
           <strong>Error</strong>
-          <span>{error}</span>
+          <span>{activeError}</span>
         </div>
       )}
-
-      <div className="stress-test">
-        <button onClick={startStream} disabled={streaming}>
-          {streaming ? 'Streaming…' : 'Send 1000 Packets'}
-        </button>
-
-        {(streaming || streamResult || streamError) && (
-          <p className="progress">Sent {progress} / 1000</p>
-        )}
-
-        {streamResult && (
-          <div className={`response ${streamResult.success ? 'success' : 'failure'}`}>
-            <strong>{streamResult.success ? 'Success' : 'Failed'}</strong>
-            <span>{streamResult.message}</span>
-          </div>
-        )}
-
-        {streamError && (
-          <div className="response failure">
-            <strong>Error</strong>
-            <span>{streamError}</span>
-          </div>
-        )}
-      </div>
     </section>
   );
 }
