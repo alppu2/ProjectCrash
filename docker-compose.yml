@@ -1,5 +1,4 @@
 services:
-  # (Go or Node.js gRPC-tuella
   order-service:
     build:
       context: .
@@ -8,16 +7,27 @@ services:
     networks:
       - micro-network
     depends_on:
-      - mongodb
-      - rabbitmq
+      mongodb:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+    develop:
+      watch:
+        - action: rebuild
+          path: ./order-service
+        - action: rebuild
+          path: ./orders
 
-  # inventory-service:
-  #   build: ./inventory-service
-  #   container_name: inventory-service
-  #   networks:
-  #     - micro-network
-  #   depends_on:
-  #     - rabbitmq
+  inventory-service:
+    build:
+      context: .
+      dockerfile: inventory-service/Dockerfile
+    container_name: inventory-service
+    networks:
+      - micro-network
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
 
   mongodb:
     image: mongo:latest
@@ -37,6 +47,11 @@ services:
       - "15672:15672"
     networks:
       - micro-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   envoy:
     image: envoyproxy/envoy:v1.25-latest
