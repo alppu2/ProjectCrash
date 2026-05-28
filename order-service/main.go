@@ -7,6 +7,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -19,45 +20,100 @@ import (
 
 type server struct {
 	pb.UnimplementedOrderServiceServer
-	db *mongo.Collection
-	ch *amqp.Channel
+	collection  *mongo.Collection
+	amqpConn    *amqp.Connection
+	amqpChannel *amqp.Channel
+	mu          sync.Mutex
 }
 
-func connectRabbitMQ() (*amqp.Connection, *amqp.Channel, error) {
-	var conn *amqp.Connection
-	var err error
-	for i := 0; i < 30; i++ {
-		conn, err = amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
-		if err == nil {
-			break
-		}
-		log.Printf("RabbitMQ not ready, retrying (%d/30)...", i+1)
-		time.Sleep(time.Second)
-	}
+// dialRabbitMQ makes a single connection attempt with no retries.
+func dialRabbitMQ() (*amqp.Connection, *amqp.Channel, error) {
+	conn, err := amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to connect to RabbitMQ after 30 attempts: %w", err)
+		return nil, nil, err
 	}
 
-	ch, err := conn.Channel()
+	channel, err := conn.Channel()
 	if err != nil {
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to open channel: %w", err)
 	}
 
-	_, err = ch.QueueDeclare("packets", false, false, false, false, nil)
+	_, err = channel.QueueDeclare("packets", false, false, false, false, nil)
 	if err != nil {
-		ch.Close()
+		channel.Close()
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to declare queue: %w", err)
 	}
 
-	return conn, ch, nil
+	return conn, channel, nil
+}
+
+// connectRabbitMQ retries dialRabbitMQ up to 30 times. Used at startup only.
+func connectRabbitMQ() (*amqp.Connection, *amqp.Channel, error) {
+	for i := 0; i < 30; i++ {
+		conn, channel, err := dialRabbitMQ()
+		if err == nil {
+			return conn, channel, nil
+		}
+		log.Printf("RabbitMQ not ready, retrying (%d/30)...", i+1)
+		time.Sleep(time.Second)
+	}
+	return nil, nil, fmt.Errorf("failed to connect to RabbitMQ after 30 attempts")
+}
+
+// ensureChannel returns a ready channel, reconnecting if needed.
+// Callers must use the returned channel — do not re-read s.amqpChannel after this returns.
+func (s *server) ensureChannel() (*amqp.Channel, error) {
+	s.mu.Lock()
+	if s.amqpChannel != nil && !s.amqpChannel.IsClosed() {
+		channel := s.amqpChannel
+		s.mu.Unlock()
+		return channel, nil
+	}
+	existingConn := s.amqpConn
+	s.mu.Unlock()
+
+	log.Println("RabbitMQ channel closed, reconnecting...")
+
+	// Try reopening a channel on the existing connection — cheap, no new TCP handshake.
+	if existingConn != nil && !existingConn.IsClosed() {
+		channel, err := existingConn.Channel()
+		if err == nil {
+			_, err = channel.QueueDeclare("packets", false, false, false, false, nil)
+			if err == nil {
+				s.mu.Lock()
+				s.amqpChannel = channel
+				s.mu.Unlock()
+				log.Println("RabbitMQ channel reopened")
+				return channel, nil
+			}
+			channel.Close()
+		}
+	}
+
+	// Full reconnect — single attempt outside the lock so other goroutines are not blocked.
+	newConn, newChannel, err := dialRabbitMQ()
+	if err != nil {
+		return nil, fmt.Errorf("RabbitMQ reconnect failed: %w", err)
+	}
+
+	s.mu.Lock()
+	if s.amqpConn != nil {
+		s.amqpConn.Close()
+	}
+	s.amqpConn = newConn
+	s.amqpChannel = newChannel
+	s.mu.Unlock()
+
+	log.Println("RabbitMQ reconnected")
+	return newChannel, nil
 }
 
 func (s *server) SendPacket(ctx context.Context, in *pb.DataPacket) (*pb.Response, error) {
 	log.Printf("Received packet: %s from %s", in.Payload, in.ClientId)
 
-	_, err := s.db.InsertOne(ctx, in)
+	_, err := s.collection.InsertOne(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -69,13 +125,20 @@ func (s *server) SendPacket(ctx context.Context, in *pb.DataPacket) (*pb.Respons
 	})
 	if err != nil {
 		log.Printf("WARN: failed to marshal packet for RabbitMQ: %v", err)
-	} else {
-		if pubErr := s.ch.PublishWithContext(ctx, "", "packets", false, false, amqp.Publishing{
-			ContentType: "application/json",
-			Body:        body,
-		}); pubErr != nil {
-			log.Printf("WARN: failed to publish to RabbitMQ: %v", pubErr)
-		}
+		return &pb.Response{Message: "Packet persisted to MongoDB", Success: true}, nil
+	}
+
+	amqpChannel, err := s.ensureChannel()
+	if err != nil {
+		log.Printf("WARN: RabbitMQ unavailable: %v", err)
+		return &pb.Response{Message: "Packet persisted to MongoDB", Success: true}, nil
+	}
+
+	if pubErr := amqpChannel.PublishWithContext(ctx, "", "packets", false, false, amqp.Publishing{
+		ContentType: "application/json",
+		Body:        body,
+	}); pubErr != nil {
+		log.Printf("WARN: failed to publish to RabbitMQ: %v", pubErr)
 	}
 
 	return &pb.Response{
@@ -86,15 +149,39 @@ func (s *server) SendPacket(ctx context.Context, in *pb.DataPacket) (*pb.Respons
 
 func (s *server) StressTest(ctx context.Context, in *pb.StressTestRequest) (*pb.Response, error) {
 	startTime := time.Now()
+
+	amqpChannel, err := s.ensureChannel()
+	if err != nil {
+		log.Printf("WARN: RabbitMQ unavailable for stress test: %v", err)
+		amqpChannel = nil
+	}
+
 	for i := int32(0); i < in.Count; i++ {
 		packet := &pb.DataPacket{
 			ClientId:       in.ClientId,
 			Payload:        in.Payload,
 			SequenceNumber: i,
 		}
-		if _, err := s.db.InsertOne(ctx, packet); err != nil {
+		if _, err := s.collection.InsertOne(ctx, packet); err != nil {
 			return nil, err
 		}
+
+		if amqpChannel != nil {
+			body, err := json.Marshal(map[string]interface{}{
+				"client_id":       packet.ClientId,
+				"payload":         packet.Payload,
+				"sequence_number": packet.SequenceNumber,
+			})
+			if err != nil {
+				log.Printf("WARN: failed to marshal packet %d for RabbitMQ: %v", i, err)
+			} else if pubErr := amqpChannel.PublishWithContext(ctx, "", "packets", false, false, amqp.Publishing{
+				ContentType: "application/json",
+				Body:        body,
+			}); pubErr != nil {
+				log.Printf("WARN: failed to publish packet %d to RabbitMQ: %v", i, pubErr)
+			}
+		}
+
 		if i%100 == 0 {
 			log.Printf("Stress test: processed %d / %d packets", i, in.Count)
 		}
@@ -113,7 +200,7 @@ func (s *server) StreamDisturbance(stream pb.OrderService_StreamDisturbanceServe
 		_, err := stream.Recv()
 		if err == io.EOF {
 			return stream.SendAndClose(&pb.Response{
-				Message: string(packetCount) + " packets processed in " + time.Since(startTime).String(),
+				Message: fmt.Sprintf("%d packets processed in %s", packetCount, time.Since(startTime)),
 				Success: true,
 			})
 		}
@@ -132,13 +219,13 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://mongodb:27017"))
+	mongoClient, err := mongo.Connect(ctx, options.Client().ApplyURI("mongodb://mongodb:27017"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	collection := client.Database("order_db").Collection("packets")
+	collection := mongoClient.Database("order_db").Collection("packets")
 
-	_, ch, err := connectRabbitMQ()
+	amqpConn, amqpChannel, err := connectRabbitMQ()
 	if err != nil {
 		log.Fatalf("RabbitMQ setup failed: %v", err)
 	}
@@ -148,11 +235,15 @@ func main() {
 		log.Fatalf("failed to listen: %v", err)
 	}
 
-	s := grpc.NewServer()
-	pb.RegisterOrderServiceServer(s, &server{db: collection, ch: ch})
+	grpcServer := grpc.NewServer()
+	pb.RegisterOrderServiceServer(grpcServer, &server{
+		collection:  collection,
+		amqpConn:    amqpConn,
+		amqpChannel: amqpChannel,
+	})
 
 	log.Println("Order Service (gRPC) listening on :50051")
-	if err := s.Serve(lis); err != nil {
+	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("failed to serve: %v", err)
 	}
 }

@@ -47,10 +47,12 @@ func connectRabbitMQ() (*amqp.Connection, *amqp.Channel, error) {
 }
 
 func main() {
-	_, ch, err := connectRabbitMQ()
+	conn, ch, err := connectRabbitMQ()
 	if err != nil {
 		log.Fatalf("RabbitMQ setup failed: %v", err)
 	}
+	defer conn.Close()
+	defer ch.Close()
 
 	msgs, err := ch.Consume("packets", "", false, false, false, false, nil)
 	if err != nil {
