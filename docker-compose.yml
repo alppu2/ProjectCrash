@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: order-service/Dockerfile
     container_name: order-service
+    env_file:
+      - order-service/.env
     networks:
       - micro-network
     depends_on:
@@ -23,6 +25,8 @@ services:
       context: .
       dockerfile: inventory-service/Dockerfile
     container_name: inventory-service
+    env_file:
+      - inventory-service/.env
     networks:
       - micro-network
     depends_on:

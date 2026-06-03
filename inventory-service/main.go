@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -19,7 +20,7 @@ func connectRabbitMQ() (*amqp.Connection, *amqp.Channel, error) {
 	var conn *amqp.Connection
 	var err error
 	for i := 0; i < 30; i++ {
-		conn, err = amqp.Dial("amqp://guest:guest@rabbitmq:5672/")
+		conn, err = amqp.Dial(os.Getenv("RABBITMQ_URL"))
 		if err == nil {
 			break
 		}
