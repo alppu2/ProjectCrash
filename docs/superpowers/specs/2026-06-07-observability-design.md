@@ -18,7 +18,7 @@ RabbitMQ metrics scraped directly via built-in `rabbitmq-prometheus` plugin (por
 
 ```
 order-service   ──┐
-                  ├─→ :9090/metrics ──→ Prometheus
+                  ├─→ :9091/metrics ──→ Prometheus
 inventory-service─┘
 
 order-service   ──┐
@@ -68,7 +68,7 @@ Promtail runs as a Docker container. It mounts `/var/lib/docker/containers`, scr
 ## Metrics
 
 ### Prometheus Endpoint
-Both services expose an HTTP `/metrics` endpoint on a dedicated port (separate from gRPC) using `prometheus/client_golang`. Go runtime metrics (GC, goroutines, memory) are registered automatically on import.
+Both services expose an HTTP `/metrics` endpoint on port `9091` (separate from gRPC) using `prometheus/client_golang`. Go runtime metrics (GC, goroutines, memory) are registered automatically on import. Both services use port `9091` internally — no conflict since each container has its own network identity in the Docker bridge network.
 
 ### order-service custom metrics
 
@@ -86,10 +86,17 @@ Both services expose an HTTP `/metrics` endpoint on a dedicated port (separate f
 |--------|------|--------|-------------|
 | `packets_consumed_total` | Counter | — | Messages successfully consumed |
 | `packets_decode_errors_total` | Counter | — | Messages that failed JSON decode |
-| `rabbitmq_consume_lag_seconds` | Histogram | — | Time between publish and consume |
+| `rabbitmq_consume_lag_seconds` | Histogram | — | Time between publish and consume (requires `published_at` Unix timestamp added to message body by order-service) |
 
 ### RabbitMQ metrics
-Scraped directly from RabbitMQ's built-in Prometheus plugin (`rabbitmq:3-management-alpine` includes it). Expose port `15692`. Key metrics: `rabbitmq_queue_messages`, `rabbitmq_queue_messages_ready`, message rates, connection counts.
+Scraped via RabbitMQ's built-in Prometheus plugin. The plugin ships with `rabbitmq:3-management-alpine` but is not enabled by default — enable it via `RABBITMQ_ENABLED_PLUGINS` env var in compose:
+
+```yaml
+environment:
+  RABBITMQ_ENABLED_PLUGINS: "rabbitmq_management,rabbitmq_prometheus"
+```
+
+Expose port `15692` for Prometheus scraping. Key metrics: `rabbitmq_queue_messages`, `rabbitmq_queue_messages_ready`, message rates, connection counts.
 
 ## Tracing
 
