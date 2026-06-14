@@ -1,0 +1,15 @@
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: order-service
+    static_configs:
+      - targets: ['order-service:9091']
+
+  - job_name: inventory-service
+    static_configs:
+      - targets: ['inventory-service:9091']
+
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ['rabbitmq:15692']

@@ -1,0 +1,76 @@
+{
+  "title": "ProjectCrash Overview",
+  "uid": "projectcrash-overview",
+  "version": 1,
+  "schemaVersion": 36,
+  "refresh": "10s",
+  "time": {"from": "now-1h", "to": "now"},
+  "tags": ["projectcrash"],
+  "panels": [
+    {
+      "id": 1,
+      "title": "RabbitMQ Queue Depth (packets)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "rabbitmq_queue_messages{queue=\"packets\"}",
+          "legendFormat": "queue depth",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Packets Processed Rate (per second)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "rate(packets_processed_total[1m])",
+          "legendFormat": "{{client_id}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "RabbitMQ Publish Errors (per second)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "rate(rabbitmq_publish_errors_total[1m])",
+          "legendFormat": "publish errors/s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Service Logs",
+      "type": "logs",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "options": {
+        "dedupStrategy": "none",
+        "enableLogDetails": true,
+        "prettifyLogMessage": false,
+        "showTime": true,
+        "sortOrder": "Descending"
+      },
+      "targets": [
+        {
+          "expr": "{container=~\"order-service|inventory-service\"}",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": {"list": []},
+  "annotations": {"list": []},
+  "links": []
+}
