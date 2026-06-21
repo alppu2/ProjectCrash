@@ -3,7 +3,6 @@ services:
     build:
       context: .
       dockerfile: order-service/Dockerfile
-    container_name: order-service
     env_file:
       - order-service/.env
     networks:
@@ -67,6 +66,7 @@ services:
     container_name: prometheus
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9090:9090"
     networks:
