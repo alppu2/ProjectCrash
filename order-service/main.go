@@ -212,6 +212,7 @@ func (s *server) StressTest(ctx context.Context, in *pb.StressTestRequest) (*pb.
 		if _, err := s.collection.InsertOne(ctx, packet); err != nil {
 			return nil, err
 		}
+		packetsProcessedTotal.WithLabelValues(in.ClientId).Inc()
 
 		if amqpChannel != nil {
 			body, err := json.Marshal(map[string]interface{}{
