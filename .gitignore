@@ -5,3 +5,4 @@ dist/
 *.local
 .claude/
 docs/scalability-learning-plan.md
+**/*.exe
