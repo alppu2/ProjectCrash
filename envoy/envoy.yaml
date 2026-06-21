@@ -45,7 +45,7 @@ static_resources:
   clusters:
     - name: order_service_cluster
       connect_timeout: 0.25s
-      type: logical_dns
+      type: STRICT_DNS
       http2_protocol_options: {}
       lb_policy: round_robin
       load_assignment:
