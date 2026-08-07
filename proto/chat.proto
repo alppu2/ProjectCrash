@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package chat.v1;
+option go_package = "./chat";
+
+service ChatService {
+  // One request, many responses: the server pushes ChatChunk frames until Done.
+  rpc Chat(ChatRequest) returns (stream ChatChunk);
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_USER = 1;
+  ROLE_ASSISTANT = 2;
+}
+
+message Message {
+  Role role = 1;
+  string content = 2;
+}
+
+message ChatRequest {
+  // Full conversation history. The last entry is the new user turn.
+  repeated Message messages = 1;
+}
+
+message ChatChunk {
+  oneof event {
+    string text_delta = 1;  // append to the in-progress assistant message
+    Done done = 2;          // terminal frame
+  }
+}
+
+message Done {
+  string stop_reason = 1;
+  int32 input_tokens = 2;   // 0 from the echo stub; real values in roadmap step 3
+  int32 output_tokens = 3;
+}

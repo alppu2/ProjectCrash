@@ -3,14 +3,14 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { DataPacket, Response, StressTestRequest } from './service_pb.js';
-import { MethodKind } from '@bufbuild/protobuf';
+import { DataPacket, Response, StressTestRequest } from "./service_pb.js";
+import { MethodKind } from "@bufbuild/protobuf";
 
 /**
  * @generated from service orders.OrderService
  */
 export const OrderService = {
-  typeName: 'orders.OrderService',
+  typeName: "orders.OrderService",
   methods: {
     /**
      * Simple request-response
@@ -18,7 +18,7 @@ export const OrderService = {
      * @generated from rpc orders.OrderService.SendPacket
      */
     sendPacket: {
-      name: 'SendPacket',
+      name: "SendPacket",
       I: DataPacket,
       O: Response,
       kind: MethodKind.Unary,
@@ -29,7 +29,7 @@ export const OrderService = {
      * @generated from rpc orders.OrderService.StreamDisturbance
      */
     streamDisturbance: {
-      name: 'StreamDisturbance',
+      name: "StreamDisturbance",
       I: DataPacket,
       O: Response,
       kind: MethodKind.ClientStreaming,
@@ -40,10 +40,11 @@ export const OrderService = {
      * @generated from rpc orders.OrderService.StressTest
      */
     stressTest: {
-      name: 'StressTest',
+      name: "StressTest",
       I: StressTestRequest,
       O: Response,
       kind: MethodKind.Unary,
     },
-  },
+  }
 } as const;
+
