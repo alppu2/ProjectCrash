@@ -252,7 +252,7 @@ func (*ChatChunk_Done) isChatChunk_Event() {}
 type Done struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	StopReason    string                 `protobuf:"bytes,1,opt,name=stop_reason,json=stopReason,proto3" json:"stop_reason,omitempty"`
-	InputTokens   int32                  `protobuf:"varint,2,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"` // 0 from the echo stub; real values in roadmap step 3
+	InputTokens   int32                  `protobuf:"varint,2,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
 	OutputTokens  int32                  `protobuf:"varint,3,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

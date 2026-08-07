@@ -33,6 +33,6 @@ message ChatChunk {
 
 message Done {
   string stop_reason = 1;
-  int32 input_tokens = 2;   // 0 from the echo stub; real values in roadmap step 3
+  int32 input_tokens = 2;
   int32 output_tokens = 3;
 }

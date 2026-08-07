@@ -178,8 +178,6 @@ export class Done extends Message$1<Done> {
   stopReason = "";
 
   /**
-   * 0 from the echo stub; real values in roadmap step 3
-   *
    * @generated from field: int32 input_tokens = 2;
    */
   inputTokens = 0;
