@@ -1105,15 +1105,17 @@ docker compose logs chat-service --tail 20
 
 Expected: a JSON line `{"level":"INFO","msg":"chat service listening","port":":50051"}`.
 
-Verify Envoy routes to the right backend — this sends a grpc-web request the way the browser will:
+Verify Envoy routes to the right backend. Send a real (if empty) grpc-web frame — the 5-byte length-prefixed header the browser sends:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' \
+printf '\x00\x00\x00\x00\x00' | curl -s -D - -o /dev/null --max-time 10 \
   -H 'Content-Type: application/grpc-web+proto' \
-  -X POST http://localhost:8080/chat.v1.ChatService/Chat
+  --data-binary @- http://localhost:8080/chat.v1.ChatService/Chat
 ```
 
-Expected: `200`. gRPC reports errors in trailers, not the HTTP status, so 200 here means Envoy found the route and reached chat-service.
+Expected: `HTTP/1.1 200 OK` with `grpc-status: 3` and `grpc-message: messages must not be empty` — the Task 3 validation answering through Envoy, which proves the whole path.
+
+> Do **not** send a zero-byte body here. Envoy's `grpc_web` filter hangs on a genuinely empty body for any real method, on the pre-existing `order-service` routes too — it is not a chat-service fault, but it makes the check look like a routing failure.
 
 Now confirm the catch-all still works and that the two routes are actually distinct:
 
