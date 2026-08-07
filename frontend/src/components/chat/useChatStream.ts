@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { chatClient } from '../../chatClient';
+import { chatClient } from '../../api';
 import { Role } from '../../gen/chat_pb';
 
 export interface ChatMessage {
