@@ -16,6 +16,12 @@ function useChatStream() {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  // Backs the concurrency guard below. A ref (rather than the `streaming`
+  // state value) avoids a stale closure: `streaming` is only current as of
+  // the render that created this callback, so two overlapping calls to
+  // send() could both read streaming === false before either commits its
+  // setStreaming(true).
+  const streamingRef = useRef(false);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -26,11 +32,16 @@ function useChatStream() {
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed || streaming) return;
+      if (!trimmed || streamingRef.current) return;
 
       const history: ChatMessage[] = [...messages, { role: Role.USER, content: trimmed }];
+      // Fixed at send time so the delta loop below always writes to this
+      // message, even if another send() starts (and appends its own
+      // placeholder) before this stream finishes.
+      const idx = history.length;
       // Append an empty assistant message that the deltas accumulate into.
       setMessages([...history, { role: Role.ASSISTANT, content: '' }]);
+      streamingRef.current = true;
       setStreaming(true);
       setError(null);
 
@@ -48,8 +59,8 @@ function useChatStream() {
           const delta = chunk.event.value;
           setMessages((prev) => {
             const next = [...prev];
-            const last = next[next.length - 1];
-            next[next.length - 1] = { ...last, content: last.content + delta };
+            const last = next[idx];
+            next[idx] = { ...last, content: last.content + delta };
             return next;
           });
         }
@@ -59,11 +70,12 @@ function useChatStream() {
           setError(err instanceof Error ? err.message : 'Unknown error');
         }
       } finally {
+        streamingRef.current = false;
         setStreaming(false);
         abortRef.current = null;
       }
     },
-    [messages, streaming]
+    [messages]
   );
 
   return { messages, streaming, error, send, stop };

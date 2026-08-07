@@ -85,7 +85,7 @@ type erroringResponder struct {
 	err error
 }
 
-func (r *erroringResponder) Stream(ctx context.Context, history []*chatpb.Message, emit func(delta string) error) (Usage, error) {
+func (r *erroringResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
 	return Usage{}, r.err
 }
 
@@ -156,6 +156,60 @@ func TestChatRejectsInvalidHistory(t *testing.T) {
 			}
 			if len(stream.sent) != 0 {
 				t.Errorf("sent %d chunks, want 0 — validation must run before any send", len(stream.sent))
+			}
+		})
+	}
+}
+
+// repeatMessages builds n user messages, each with the given content, used to
+// probe the maxHistoryMessages and maxHistoryBytes bounds in validateHistory.
+func repeatMessages(n int, content string) []*chatpb.Message {
+	msgs := make([]*chatpb.Message, n)
+	for i := range msgs {
+		msgs[i] = &chatpb.Message{Role: chatpb.Role_ROLE_USER, Content: content}
+	}
+	return msgs
+}
+
+func TestValidateHistoryBounds(t *testing.T) {
+	tests := []struct {
+		name    string
+		msgs    []*chatpb.Message
+		wantErr bool
+	}{
+		{
+			name:    "message count over limit is rejected",
+			msgs:    repeatMessages(maxHistoryMessages+1, "hi"),
+			wantErr: true,
+		},
+		{
+			name:    "content bytes over limit is rejected",
+			msgs:    []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: strings.Repeat("a", maxHistoryBytes+1)}},
+			wantErr: true,
+		},
+		{
+			name:    "message count just under limit is accepted",
+			msgs:    repeatMessages(maxHistoryMessages, "hi"),
+			wantErr: false,
+		},
+		{
+			name:    "content bytes just under limit is accepted",
+			msgs:    []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: strings.Repeat("a", maxHistoryBytes)}},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateHistory(tt.msgs)
+			if tt.wantErr {
+				if status.Code(err) != codes.InvalidArgument {
+					t.Fatalf("validateHistory() code = %v, want InvalidArgument (err = %v)", status.Code(err), err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("validateHistory() error = %v, want nil", err)
 			}
 		})
 	}

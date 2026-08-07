@@ -8,6 +8,7 @@ COPY chat-service/chat/ chat/
 RUN CGO_ENABLED=0 GOOS=linux go build -o /chat-service .
 
 FROM alpine:latest
+RUN apk add --no-cache ca-certificates
 COPY --from=builder /chat-service /chat-service
 EXPOSE 50051
 CMD ["/chat-service"]

@@ -36,7 +36,8 @@ func TestEchoResponderChunking(t *testing.T) {
 			r := &EchoResponder{}
 			var got []string
 
-			usage, err := r.Stream(context.Background(), userHistory(tt.content), func(d string) error {
+			req := &chatpb.ChatRequest{Messages: userHistory(tt.content)}
+			usage, err := r.Stream(context.Background(), req, func(d string) error {
 				got = append(got, d)
 				return nil
 			})
@@ -65,7 +66,8 @@ func TestEchoResponderUsesLastMessage(t *testing.T) {
 	}
 
 	var got []string
-	if _, err := r.Stream(context.Background(), history, func(d string) error {
+	req := &chatpb.ChatRequest{Messages: history}
+	if _, err := r.Stream(context.Background(), req, func(d string) error {
 		got = append(got, d)
 		return nil
 	}); err != nil {
@@ -83,7 +85,8 @@ func TestEchoResponderStopsOnCancel(t *testing.T) {
 	defer cancel()
 
 	count := 0
-	_, err := r.Stream(ctx, userHistory("one two three four five"), func(string) error {
+	req := &chatpb.ChatRequest{Messages: userHistory("one two three four five")}
+	_, err := r.Stream(ctx, req, func(string) error {
 		count++
 		if count == 2 {
 			cancel()
@@ -103,7 +106,8 @@ func TestEchoResponderPropagatesEmitError(t *testing.T) {
 	r := &EchoResponder{}
 	sentinel := errors.New("send failed")
 
-	_, err := r.Stream(context.Background(), userHistory("one two"), func(string) error {
+	req := &chatpb.ChatRequest{Messages: userHistory("one two")}
+	_, err := r.Stream(context.Background(), req, func(string) error {
 		return sentinel
 	})
 	if !errors.Is(err, sentinel) {

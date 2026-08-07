@@ -11,6 +11,11 @@ import (
 // Usage reports what a Responder consumed and produced for one turn.
 // The echo stub leaves InputTokens at zero; a model-backed Responder fills
 // all three fields from the provider's usage report.
+//
+// A Responder returning a non-nil error may still populate Usage with
+// partial values — e.g. a provider that fails mid-stream after emitting 400
+// output tokens still billed for them. Callers must not discard Usage just
+// because err is non-nil.
 type Usage struct {
 	StopReason   string
 	InputTokens  int32
@@ -22,9 +27,12 @@ type Usage struct {
 // returns an error, Stream stops and returns that error unchanged.
 //
 // This is the seam for roadmap step 3: a Claude-backed implementation drops
-// in here without the RPC handler changing.
+// in here without the RPC handler changing. Taking the full request (rather
+// than a bare history slice) means future ChatRequest fields — model,
+// temperature, max_tokens, system prompt, RAG top-k — reach an implementation
+// without another interface change and another update to every call site.
 type Responder interface {
-	Stream(ctx context.Context, history []*chatpb.Message, emit func(delta string) error) (Usage, error)
+	Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error)
 }
 
 // EchoResponder replays the last user message one word at a time. It stands in
@@ -34,8 +42,8 @@ type EchoResponder struct {
 	Delay time.Duration
 }
 
-func (e *EchoResponder) Stream(ctx context.Context, history []*chatpb.Message, emit func(delta string) error) (Usage, error) {
-	words := strings.Fields(lastContent(history))
+func (e *EchoResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
+	words := strings.Fields(lastContent(req.GetMessages()))
 
 	for i, word := range words {
 		select {
