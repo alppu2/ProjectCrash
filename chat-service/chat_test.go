@@ -8,12 +8,25 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
 )
+
+// counterValue reads the current value of a prometheus counter without
+// pulling in the testutil subpackage, which needs go.sum entries this repo
+// hasn't resolved (kylelemons/godebug).
+func counterValue(c prometheus.Counter) float64 {
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
+}
 
 // fakeStream satisfies grpc.ServerStreamingServer[chatpb.ChatChunk] by
 // collecting sends in memory. The embedded nil interface supplies the methods
@@ -62,6 +75,18 @@ func (f *fakeStream) terminal() *chatpb.Done {
 
 func newTestServer() *chatServer {
 	return &chatServer{responder: &EchoResponder{}}
+}
+
+// erroringResponder always returns a fixed error, ignoring ctx entirely. It
+// lets tests produce a genuine responder failure independent of whether the
+// stream's context happens to be cancelled — EchoResponder can't do that,
+// since its only error path is ctx cancellation.
+type erroringResponder struct {
+	err error
+}
+
+func (r *erroringResponder) Stream(ctx context.Context, history []*chatpb.Message, emit func(delta string) error) (Usage, error) {
+	return Usage{}, r.err
 }
 
 func TestChatStreamsDeltasThenDone(t *testing.T) {
@@ -158,6 +183,37 @@ func TestChatStopsOnClientCancel(t *testing.T) {
 	}
 	if len(stream.texts()) >= 5 {
 		t.Errorf("sent %d deltas, want fewer than 5 (stream should stop early)", len(stream.texts()))
+	}
+}
+
+func TestChatDoesNotMisclassifyErrorAsCancelled(t *testing.T) {
+	sentinel := errors.New("model overloaded")
+	srv := &chatServer{responder: &erroringResponder{err: sentinel}}
+
+	// Cancel the context before Stream even runs, so the responder's error
+	// and the client's cancellation land at the same moment. classifyOutcome
+	// must trust the error, not ctx, or a real fault gets hidden as a
+	// routine disconnect.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream := newFakeStream(ctx)
+	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{
+		{Role: chatpb.Role_ROLE_USER, Content: "hello"},
+	}}
+
+	errBefore := counterValue(chatStreamsTotal.WithLabelValues("error"))
+	cancelledBefore := counterValue(chatStreamsTotal.WithLabelValues("cancelled"))
+
+	err := srv.Chat(req, stream)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("Chat() error = %v, want %v", err, sentinel)
+	}
+
+	if got := counterValue(chatStreamsTotal.WithLabelValues("error")); got != errBefore+1 {
+		t.Errorf(`chatStreamsTotal{status="error"} = %v, want %v`, got, errBefore+1)
+	}
+	if got := counterValue(chatStreamsTotal.WithLabelValues("cancelled")); got != cancelledBefore {
+		t.Errorf(`chatStreamsTotal{status="cancelled"} = %v, want unchanged at %v (error was misclassified as cancelled)`, got, cancelledBefore)
 	}
 }
 

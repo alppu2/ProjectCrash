@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -25,6 +27,7 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 
 	if err := validateHistory(req.GetMessages()); err != nil {
 		chatStreamsTotal.WithLabelValues("error").Inc()
+		chatStreamDuration.Observe(time.Since(start).Seconds())
 		return err
 	}
 
@@ -44,14 +47,16 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 		return nil
 	})
 	if err != nil {
-		// A cancelled context means the client hung up — expected, not a fault.
-		outcome := "error"
-		if ctx.Err() != nil {
-			outcome = "cancelled"
-		}
+		// A cancelled context or a Canceled status from a hung-up client is
+		// expected, not a fault; anything else is a genuine responder error.
+		outcome := classifyOutcome(err)
 		chatStreamsTotal.WithLabelValues(outcome).Inc()
 		chatStreamDuration.Observe(time.Since(start).Seconds())
-		log.Warn("chat stream ended early", "error", err, "outcome", outcome)
+		if outcome == "cancelled" {
+			log.Info("chat stream ended early", "error", err, "outcome", outcome)
+		} else {
+			log.Warn("chat stream ended early", "error", err, "outcome", outcome)
+		}
 		return err
 	}
 
@@ -62,7 +67,7 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 			OutputTokens: usage.OutputTokens,
 		}},
 	}); err != nil {
-		chatStreamsTotal.WithLabelValues("error").Inc()
+		chatStreamsTotal.WithLabelValues(classifyOutcome(err)).Inc()
 		chatStreamDuration.Observe(time.Since(start).Seconds())
 		return err
 	}
@@ -71,6 +76,20 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 	chatStreamDuration.Observe(time.Since(start).Seconds())
 	log.Info("chat stream completed", "output_tokens", usage.OutputTokens)
 	return nil
+}
+
+// classifyOutcome maps a responder or send error to a terminal status for
+// metrics and logging. A client disconnect can surface either as a wrapped
+// context error (from the responder noticing ctx.Done) or as a gRPC status
+// error with code Canceled (returned by stream.Send once the client has hung
+// up) — errors.Is alone would miss the latter. Both are expected, not a
+// fault; anything else is a genuine error, even if the context also happens
+// to be cancelled at the same moment.
+func classifyOutcome(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.Canceled {
+		return "cancelled"
+	}
+	return "error"
 }
 
 // validateHistory rejects requests before any frame is sent, so the client
