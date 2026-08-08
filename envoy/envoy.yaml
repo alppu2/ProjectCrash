@@ -30,11 +30,14 @@ static_resources:
                         - match: { prefix: "/chat.v1.ChatService/" }
                           route:
                             cluster: chat_service_cluster
+                            # Defaults to 15s, which truncates streams.
+                            timeout: 0s
                             max_stream_duration:
                               grpc_timeout_header_max: 0s
                         - match: { prefix: "/" }
                           route:
                             cluster: order_service_cluster
+                            timeout: 0s
                             max_stream_duration:
                               grpc_timeout_header_max: 0s
                 http_filters:
