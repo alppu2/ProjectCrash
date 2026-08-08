@@ -20,6 +20,10 @@ scrape_configs:
     static_configs:
       - targets: ['inventory-service:9091']
 
+  - job_name: chat-service
+    static_configs:
+      - targets: ['chat-service:9091']
+
   - job_name: rabbitmq
     static_configs:
       - targets: ['rabbitmq:15692']

@@ -3,15 +3,8 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import type {
-  BinaryReadOptions,
-  FieldList,
-  JsonReadOptions,
-  JsonValue,
-  PartialMessage,
-  PlainMessage,
-} from '@bufbuild/protobuf';
-import { Message, proto3 } from '@bufbuild/protobuf';
+import type { BinaryReadOptions, FieldList, JsonReadOptions, JsonValue, PartialMessage, PlainMessage } from "@bufbuild/protobuf";
+import { Message, proto3 } from "@bufbuild/protobuf";
 
 /**
  * @generated from message orders.DataPacket
@@ -20,12 +13,12 @@ export class DataPacket extends Message<DataPacket> {
   /**
    * @generated from field: string client_id = 1;
    */
-  clientId = '';
+  clientId = "";
 
   /**
    * @generated from field: string payload = 2;
    */
-  payload = '';
+  payload = "";
 
   /**
    * @generated from field: int32 sequence_number = 3;
@@ -38,43 +31,26 @@ export class DataPacket extends Message<DataPacket> {
   }
 
   static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = 'orders.DataPacket';
+  static readonly typeName = "orders.DataPacket";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: 'client_id', kind: 'scalar', T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: 'payload', kind: 'scalar', T: 9 /* ScalarType.STRING */ },
-    {
-      no: 3,
-      name: 'sequence_number',
-      kind: 'scalar',
-      T: 5 /* ScalarType.INT32 */,
-    },
+    { no: 1, name: "client_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "payload", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "sequence_number", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
   ]);
 
-  static fromBinary(
-    bytes: Uint8Array,
-    options?: Partial<BinaryReadOptions>
-  ): DataPacket {
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): DataPacket {
     return new DataPacket().fromBinary(bytes, options);
   }
 
-  static fromJson(
-    jsonValue: JsonValue,
-    options?: Partial<JsonReadOptions>
-  ): DataPacket {
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): DataPacket {
     return new DataPacket().fromJson(jsonValue, options);
   }
 
-  static fromJsonString(
-    jsonString: string,
-    options?: Partial<JsonReadOptions>
-  ): DataPacket {
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): DataPacket {
     return new DataPacket().fromJsonString(jsonString, options);
   }
 
-  static equals(
-    a: DataPacket | PlainMessage<DataPacket> | undefined,
-    b: DataPacket | PlainMessage<DataPacket> | undefined
-  ): boolean {
+  static equals(a: DataPacket | PlainMessage<DataPacket> | undefined, b: DataPacket | PlainMessage<DataPacket> | undefined): boolean {
     return proto3.util.equals(DataPacket, a, b);
   }
 }
@@ -86,7 +62,7 @@ export class Response extends Message<Response> {
   /**
    * @generated from field: string message = 1;
    */
-  message = '';
+  message = "";
 
   /**
    * @generated from field: bool success = 2;
@@ -99,37 +75,25 @@ export class Response extends Message<Response> {
   }
 
   static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = 'orders.Response';
+  static readonly typeName = "orders.Response";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: 'message', kind: 'scalar', T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: 'success', kind: 'scalar', T: 8 /* ScalarType.BOOL */ },
+    { no: 1, name: "message", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "success", kind: "scalar", T: 8 /* ScalarType.BOOL */ },
   ]);
 
-  static fromBinary(
-    bytes: Uint8Array,
-    options?: Partial<BinaryReadOptions>
-  ): Response {
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Response {
     return new Response().fromBinary(bytes, options);
   }
 
-  static fromJson(
-    jsonValue: JsonValue,
-    options?: Partial<JsonReadOptions>
-  ): Response {
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): Response {
     return new Response().fromJson(jsonValue, options);
   }
 
-  static fromJsonString(
-    jsonString: string,
-    options?: Partial<JsonReadOptions>
-  ): Response {
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): Response {
     return new Response().fromJsonString(jsonString, options);
   }
 
-  static equals(
-    a: Response | PlainMessage<Response> | undefined,
-    b: Response | PlainMessage<Response> | undefined
-  ): boolean {
+  static equals(a: Response | PlainMessage<Response> | undefined, b: Response | PlainMessage<Response> | undefined): boolean {
     return proto3.util.equals(Response, a, b);
   }
 }
@@ -141,12 +105,12 @@ export class StressTestRequest extends Message<StressTestRequest> {
   /**
    * @generated from field: string client_id = 1;
    */
-  clientId = '';
+  clientId = "";
 
   /**
    * @generated from field: string payload = 2;
    */
-  payload = '';
+  payload = "";
 
   /**
    * @generated from field: int32 count = 3;
@@ -159,38 +123,27 @@ export class StressTestRequest extends Message<StressTestRequest> {
   }
 
   static readonly runtime: typeof proto3 = proto3;
-  static readonly typeName = 'orders.StressTestRequest';
+  static readonly typeName = "orders.StressTestRequest";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
-    { no: 1, name: 'client_id', kind: 'scalar', T: 9 /* ScalarType.STRING */ },
-    { no: 2, name: 'payload', kind: 'scalar', T: 9 /* ScalarType.STRING */ },
-    { no: 3, name: 'count', kind: 'scalar', T: 5 /* ScalarType.INT32 */ },
+    { no: 1, name: "client_id", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 2, name: "payload", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "count", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
   ]);
 
-  static fromBinary(
-    bytes: Uint8Array,
-    options?: Partial<BinaryReadOptions>
-  ): StressTestRequest {
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): StressTestRequest {
     return new StressTestRequest().fromBinary(bytes, options);
   }
 
-  static fromJson(
-    jsonValue: JsonValue,
-    options?: Partial<JsonReadOptions>
-  ): StressTestRequest {
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): StressTestRequest {
     return new StressTestRequest().fromJson(jsonValue, options);
   }
 
-  static fromJsonString(
-    jsonString: string,
-    options?: Partial<JsonReadOptions>
-  ): StressTestRequest {
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): StressTestRequest {
     return new StressTestRequest().fromJsonString(jsonString, options);
   }
 
-  static equals(
-    a: StressTestRequest | PlainMessage<StressTestRequest> | undefined,
-    b: StressTestRequest | PlainMessage<StressTestRequest> | undefined
-  ): boolean {
+  static equals(a: StressTestRequest | PlainMessage<StressTestRequest> | undefined, b: StressTestRequest | PlainMessage<StressTestRequest> | undefined): boolean {
     return proto3.util.equals(StressTestRequest, a, b);
   }
 }
+

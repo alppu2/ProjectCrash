@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { client } from '../../client';
+import { client } from '../../api';
 
 interface FormState {
   clientId: string;
@@ -55,17 +55,20 @@ function usePacketSender() {
             payload: form.payload,
             sequenceNumber: parseInt(form.sequenceNumber, 10),
           });
-          if (mountedRef.current) setResult({ message: res.message, success: res.success });
+          if (mountedRef.current)
+            setResult({ message: res.message, success: res.success });
         } else {
           const res = await client.stressTest({
             clientId: form.clientId,
             payload: form.payload,
             count: packetCount,
           });
-          if (mountedRef.current) setResult({ message: res.message, success: res.success });
+          if (mountedRef.current)
+            setResult({ message: res.message, success: res.success });
         }
       } catch (err) {
-        if (mountedRef.current) setError(err instanceof Error ? err.message : 'Unknown error');
+        if (mountedRef.current)
+          setError(err instanceof Error ? err.message : 'Unknown error');
       } finally {
         if (mountedRef.current) setBusy(false);
       }
@@ -73,7 +76,16 @@ function usePacketSender() {
     [form, packetCount, busy]
   );
 
-  return { form, handleChange, handleSend, busy, result, error, isStreaming, packetCount };
+  return {
+    form,
+    handleChange,
+    handleSend,
+    busy,
+    result,
+    error,
+    isStreaming,
+    packetCount,
+  };
 }
 
 export default usePacketSender;
