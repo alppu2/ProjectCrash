@@ -3,7 +3,7 @@ WORKDIR /app
 
 COPY order-service/go.mod order-service/go.sum ./
 COPY order-service/*.go ./
-COPY orders/ orders/
+COPY order-service/orders/ orders/
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /order-service .
 
