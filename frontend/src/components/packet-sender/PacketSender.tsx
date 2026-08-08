@@ -2,8 +2,16 @@ import usePacketSender from './usePacketSender';
 import './PacketSender.css';
 
 function PacketSender() {
-  const { form, handleChange, handleSend, busy, result, error, isStreaming, packetCount } =
-    usePacketSender();
+  const {
+    form,
+    handleChange,
+    handleSend,
+    busy,
+    result,
+    error,
+    isStreaming,
+    packetCount,
+  } = usePacketSender();
 
   return (
     <section id="center">
