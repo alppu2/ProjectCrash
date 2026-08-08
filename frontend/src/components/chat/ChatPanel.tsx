@@ -7,10 +7,13 @@ function ChatPanel() {
   const { messages, streaming, error, send, stop } = useChatStream();
   const [input, setInput] = useState('');
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    send(input);
+    const text = input;
     setInput('');
+    // send() rolls the turn back when it produced nothing, so hand the text
+    // back rather than losing it.
+    if (!(await send(text))) setInput(text);
   }
 
   return (
@@ -19,9 +22,14 @@ function ChatPanel() {
 
       <ol className="chat-messages">
         {messages.map((m, i) => (
-          <li key={i} className={m.role === Role.USER ? 'chat-user' : 'chat-assistant'}>
+          <li
+            key={i}
+            className={m.role === Role.USER ? 'chat-user' : 'chat-assistant'}
+          >
             {m.content}
-            {streaming && i === messages.length - 1 && <span className="chat-cursor">▌</span>}
+            {streaming && i === messages.length - 1 && (
+              <span className="chat-cursor">▌</span>
+            )}
           </li>
         ))}
       </ol>

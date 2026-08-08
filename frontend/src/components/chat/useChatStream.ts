@@ -11,6 +11,17 @@ export interface ChatMessage {
 // conversation does not grow the request without bound.
 const MAX_HISTORY = 20;
 
+// The window has to begin on a user turn, so snapping forward can return
+// MAX_HISTORY - 1 messages.
+function trimHistory(history: ChatMessage[]): ChatMessage[] {
+  if (history.length <= MAX_HISTORY) return history;
+  let start = history.length - MAX_HISTORY;
+  while (start < history.length && history[start].role !== Role.USER) {
+    start += 1;
+  }
+  return history.slice(start);
+}
+
 function useChatStream() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
@@ -30,11 +41,14 @@ function useChatStream() {
   }, []);
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<boolean> => {
       const trimmed = text.trim();
-      if (!trimmed || streamingRef.current) return;
+      if (!trimmed || streamingRef.current) return false;
 
-      const history: ChatMessage[] = [...messages, { role: Role.USER, content: trimmed }];
+      const history: ChatMessage[] = [
+        ...messages,
+        { role: Role.USER, content: trimmed },
+      ];
       // Fixed at send time so the delta loop below always writes to this
       // message, even if another send() starts (and appends its own
       // placeholder) before this stream finishes.
@@ -47,16 +61,19 @@ function useChatStream() {
 
       const ac = new AbortController();
       abortRef.current = ac;
+      let produced = false;
 
       try {
         const stream = chatClient.chat(
-          { messages: history.slice(-MAX_HISTORY) },
+          { messages: trimHistory(history) },
           { signal: ac.signal }
         );
 
         for await (const chunk of stream) {
           if (chunk.event.case !== 'textDelta') continue;
           const delta = chunk.event.value;
+          if (!delta) continue;
+          produced = true;
           setMessages((prev) => {
             const next = [...prev];
             const last = next[idx];
@@ -70,10 +87,16 @@ function useChatStream() {
           setError(err instanceof Error ? err.message : 'Unknown error');
         }
       } finally {
+        // Drop the user message along with its placeholder: an empty assistant
+        // message renders as a blank bubble and is replayed as an empty turn in
+        // every later request.
+        if (!produced) setMessages((prev) => prev.slice(0, idx - 1));
         streamingRef.current = false;
         setStreaming(false);
         abortRef.current = null;
       }
+
+      return produced;
     },
     [messages]
   );
