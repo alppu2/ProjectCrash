@@ -56,6 +56,13 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 		chatChunksSentTotal.Inc()
 		return nil
 	})
+
+	// Recorded before branching on err: usage may be partially populated on a
+	// mid-stream failure (see the Usage doc comment), and those tokens were
+	// still consumed. This is chat_tokens_total, not chat_streams_total — the
+	// single-metrics-site rule in this function's doc comment is unaffected.
+	recordTokens(usage)
+
 	if err != nil {
 		// A cancelled context or a Canceled status from a hung-up client is
 		// expected, not a fault; anything else is a genuine responder error.

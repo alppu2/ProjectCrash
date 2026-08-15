@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -481,5 +483,47 @@ func TestOpenAIResponderStopsOnContextCancel(t *testing.T) {
 	}
 	if got := counterValue(chatProviderErrorsTotal.WithLabelValues("decode_error")); got != beforeDecode {
 		t.Errorf("decode_error counter moved on cancel: %v, want %v", got, beforeDecode)
+	}
+}
+
+// histogramCount reads a histogram's sample count directly, for the same
+// reason counterValue exists: the testutil subpackage needs go.sum entries
+// this repo has not resolved.
+func histogramCount(h prometheus.Histogram) uint64 {
+	var m dto.Metric
+	if err := h.Write(&m); err != nil {
+		return 0
+	}
+	return m.GetHistogram().GetSampleCount()
+}
+
+func TestOpenAIResponderObservesTimeToFirstToken(t *testing.T) {
+	srv := sseServer(t, http.StatusOK, frameHel, frameLo, frameFinish, frameUsage, frameDone)
+	r := newTestLLM(srv.URL)
+
+	before := histogramCount(chatTimeToFirstTokenSeconds)
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	if _, err := r.Stream(context.Background(), req, func(string) error { return nil }); err != nil {
+		t.Fatalf("Stream() error = %v, want nil", err)
+	}
+
+	// Exactly one observation per stream, on the first delta — not per frame.
+	if got := histogramCount(chatTimeToFirstTokenSeconds); got != before+1 {
+		t.Errorf("TTFT sample count = %d, want %d", got, before+1)
+	}
+}
+
+func TestOpenAIResponderSkipsTimeToFirstTokenWhenNoDeltas(t *testing.T) {
+	srv := sseServer(t, http.StatusOK, frameFinish, frameUsage, frameDone)
+	r := newTestLLM(srv.URL)
+
+	before := histogramCount(chatTimeToFirstTokenSeconds)
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	if _, err := r.Stream(context.Background(), req, func(string) error { return nil }); err != nil {
+		t.Fatalf("Stream() error = %v, want nil", err)
+	}
+
+	if got := histogramCount(chatTimeToFirstTokenSeconds); got != before {
+		t.Errorf("TTFT sample count = %d, want %d — an empty reply has no first token", got, before)
 	}
 }

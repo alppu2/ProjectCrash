@@ -150,6 +150,7 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		httpReq.Header.Set("Authorization", "Bearer "+o.APIKey)
 	}
 
+	start := time.Now()
 	resp, err := o.Client.Do(httpReq)
 	if err != nil {
 		// A cancelled request surfaces here as a transport error wrapping
@@ -233,6 +234,7 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 				continue
 			}
 			if firstDelta {
+				chatTimeToFirstTokenSeconds.Observe(time.Since(start).Seconds())
 				firstDelta = false
 			}
 			if err := emit(choice.Delta.Content); err != nil {

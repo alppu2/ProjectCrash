@@ -300,3 +300,55 @@ func TestChatPropagatesSendError(t *testing.T) {
 		t.Fatal("Chat() error = nil, want the transport error")
 	}
 }
+
+// usageResponder returns a fixed Usage and error without streaming anything,
+// so a test can drive the handler's accounting directly. erroringResponder
+// cannot: it always reports zero usage.
+type usageResponder struct {
+	usage Usage
+	err   error
+}
+
+func (r *usageResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
+	return r.usage, r.err
+}
+
+func TestChatRecordsTokenCounts(t *testing.T) {
+	beforeIn := counterValue(chatTokensTotal.WithLabelValues("input"))
+	beforeOut := counterValue(chatTokensTotal.WithLabelValues("output"))
+
+	srv := &chatServer{responder: &usageResponder{usage: Usage{
+		StopReason:   "stop",
+		InputTokens:  26,
+		OutputTokens: 298,
+	}}}
+	if err := srv.Chat(&chatpb.ChatRequest{Messages: userHistory("hi")}, newFakeStream(context.Background())); err != nil {
+		t.Fatalf("Chat() error = %v, want nil", err)
+	}
+
+	if got := counterValue(chatTokensTotal.WithLabelValues("input")); got != beforeIn+26 {
+		t.Errorf("chat_tokens_total{direction=\"input\"} = %v, want %v", got, beforeIn+26)
+	}
+	if got := counterValue(chatTokensTotal.WithLabelValues("output")); got != beforeOut+298 {
+		t.Errorf("chat_tokens_total{direction=\"output\"} = %v, want %v", got, beforeOut+298)
+	}
+}
+
+func TestChatRecordsPartialTokenCountsOnError(t *testing.T) {
+	beforeOut := counterValue(chatTokensTotal.WithLabelValues("output"))
+
+	// A provider that fails after reporting usage still consumed those tokens,
+	// so the counter must move even though Chat returns an error.
+	srv := &chatServer{responder: &usageResponder{
+		usage: Usage{OutputTokens: 400},
+		err:   errors.New("provider exploded"),
+	}}
+	err := srv.Chat(&chatpb.ChatRequest{Messages: userHistory("hi")}, newFakeStream(context.Background()))
+	if err == nil {
+		t.Fatal("Chat() error = nil, want the responder error")
+	}
+
+	if got := counterValue(chatTokensTotal.WithLabelValues("output")); got != beforeOut+400 {
+		t.Errorf("chat_tokens_total{direction=\"output\"} = %v, want %v", got, beforeOut+400)
+	}
+}
