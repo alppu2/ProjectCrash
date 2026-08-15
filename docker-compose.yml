@@ -43,6 +43,9 @@ services:
       - chat-service/.env
     networks:
       - micro-network
+    depends_on:
+      ollama:
+        condition: service_healthy
 
   ollama:
     image: ollama/ollama:0.32.6
