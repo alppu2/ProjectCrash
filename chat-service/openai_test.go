@@ -210,3 +210,83 @@ func TestOpenAIResponderPropagatesEmitError(t *testing.T) {
 		t.Fatalf("Stream() error = %v, want %v unwrapped", err, sentinel)
 	}
 }
+
+// A hung-up browser must surface as a bare context.Canceled, not a gRPC
+// status: classifyOutcome (chat.go) uses errors.Is/status.Code to treat a
+// cancellation as expected rather than a fault, and status.Errorf's %v would
+// destroy the chain that check relies on. The server here writes one delta,
+// flushes, then blocks with no further frames — the client cancels from
+// inside emit, mimicking a browser disconnecting mid-generation.
+func TestOpenAIResponderCancelMidStream(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, frameHel+"\n\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done() // stay open with no further frames until the client hangs up
+	}))
+	t.Cleanup(srv.Close)
+	r := newTestLLM(srv.URL)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	_, err := r.Stream(ctx, req, func(string) error {
+		cancel()
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Stream() error = %v, want context.Canceled", err)
+	}
+	if got := classifyOutcome(err); got != "cancelled" {
+		t.Errorf("classifyOutcome(err) = %q, want %q", got, "cancelled")
+	}
+}
+
+// A stream that ends without [DONE] must still report whatever usage it saw
+// before dying — this closes the gap TestOpenAIResponderKeepsUsageOnMidStreamFailure
+// leaves open, since that test reaches its error via json.Unmarshal rather
+// than the missing-sentinel path.
+func TestOpenAIResponderMissingDoneSentinelKeepsUsage(t *testing.T) {
+	srv := sseServer(t, http.StatusOK, frameHel, frameFinish, frameUsage)
+	r := newTestLLM(srv.URL)
+
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	usage, err := r.Stream(context.Background(), req, func(string) error { return nil })
+	if err == nil {
+		t.Fatal("Stream() error = nil, want an error for a stream missing [DONE]")
+	}
+	if usage.StopReason != "stop" {
+		t.Errorf("StopReason = %q, want %q", usage.StopReason, "stop")
+	}
+	if usage.InputTokens != 26 {
+		t.Errorf("InputTokens = %d, want 26", usage.InputTokens)
+	}
+	if usage.OutputTokens != 298 {
+		t.Errorf("OutputTokens = %d, want 298", usage.OutputTokens)
+	}
+}
+
+// The SSE grammar makes the space after "data:" optional; a self-hosted
+// gateway in front of an OpenAI-compatible provider may omit it even though
+// Ollama and OpenAI both send it.
+func TestOpenAIResponderToleratesNoSpaceAfterColon(t *testing.T) {
+	srv := sseServer(t, http.StatusOK,
+		`data:{"choices":[{"index":0,"delta":{"content":"Hel"}}]}`,
+		`data:[DONE]`,
+	)
+	r := newTestLLM(srv.URL)
+
+	var got []string
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	_, err := r.Stream(context.Background(), req, func(d string) error {
+		got = append(got, d)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Stream() error = %v, want nil", err)
+	}
+	if want := []string{"Hel"}; !slices.Equal(got, want) {
+		t.Errorf("deltas = %q, want %q", got, want)
+	}
+}

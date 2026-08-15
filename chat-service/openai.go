@@ -79,8 +79,11 @@ type openAIChunk struct {
 }
 
 // sseDataPrefix marks a payload line in a server-sent-event stream. Other
-// fields (event:, id:, retry:) and comment lines (:) are ignored.
-const sseDataPrefix = "data: "
+// fields (event:, id:, retry:) and comment lines (:) are ignored. The space
+// after the colon is optional per the SSE grammar — a parser must strip one
+// leading space if present, not require it — so the prefix excludes it and
+// Stream trims at most one afterward.
+const sseDataPrefix = "data:"
 
 // sseDoneSentinel terminates an OpenAI-compatible stream. Unlike Ollama's
 // native NDJSON there is no done flag on the final JSON object, so this
@@ -136,6 +139,10 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		if !ok {
 			continue // blank separator line, comment, or a non-data SSE field
 		}
+		// The SSE grammar makes the space after the colon optional and requires a
+		// parser to strip one if present. Ollama and OpenAI both send it; a proxy
+		// or self-hosted gateway in front of them may not.
+		payload = strings.TrimPrefix(payload, " ")
 		if payload == sseDoneSentinel {
 			return usage, nil
 		}
@@ -168,6 +175,13 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		// A cancelled read surfaces here rather than at the loop's ctx check,
+		// because Scan() returns false without completing a line. Return the
+		// bare context error: classifyOutcome must see a hangup as cancelled,
+		// and status.Errorf's %v would destroy the chain it matches on.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return usage, ctxErr
+		}
 		return usage, status.Errorf(codes.Internal, "reading completions stream: %v", err)
 	}
 
