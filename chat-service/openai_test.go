@@ -8,7 +8,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
 )
@@ -288,5 +292,194 @@ func TestOpenAIResponderToleratesNoSpaceAfterColon(t *testing.T) {
 	}
 	if want := []string{"Hel"}; !slices.Equal(got, want) {
 		t.Errorf("deltas = %q, want %q", got, want)
+	}
+}
+
+// hangingSSEServer streams the given frames and then blocks until the client
+// goes away, so a test can cancel mid-stream while the body is still open.
+func hangingSSEServer(t *testing.T, frames ...string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, f := range frames {
+			io.WriteString(w, f+"\n\n")
+			w.(http.Flusher).Flush()
+		}
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestOpenAIResponderProviderErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		baseURL    func(t *testing.T) string
+		wantCode   codes.Code
+		wantReason string
+		wantInMsg  string
+	}{
+		{
+			name: "provider not running",
+			baseURL: func(t *testing.T) string {
+				// A server closed before the request: the dial fails exactly
+				// as it does when the ollama container is down.
+				srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+				url := srv.URL
+				srv.Close()
+				return url
+			},
+			wantCode:   codes.Unavailable,
+			wantReason: "unreachable",
+			wantInMsg:  "unreachable",
+		},
+		{
+			name: "model not available",
+			baseURL: func(t *testing.T) string {
+				return sseServer(t, http.StatusNotFound).URL
+			},
+			wantCode:   codes.Unavailable,
+			wantReason: "model_missing",
+			// The most likely local misconfiguration, so the message names the fix.
+			wantInMsg: "ollama pull llama3.2:3b",
+		},
+		{
+			name: "bad api key",
+			baseURL: func(t *testing.T) string {
+				return sseServer(t, http.StatusUnauthorized).URL
+			},
+			// Internal, not Unauthenticated: the browser's credentials are not
+			// the problem, our LLM_API_KEY is.
+			wantCode:   codes.Internal,
+			wantReason: "auth_error",
+			wantInMsg:  "LLM_API_KEY",
+		},
+		{
+			name: "rate limited",
+			baseURL: func(t *testing.T) string {
+				return sseServer(t, http.StatusTooManyRequests).URL
+			},
+			wantCode:   codes.Unavailable,
+			wantReason: "rate_limited",
+			wantInMsg:  "rate limit",
+		},
+		{
+			name: "other non-200",
+			baseURL: func(t *testing.T) string {
+				return sseServer(t, http.StatusInternalServerError).URL
+			},
+			wantCode:   codes.Unavailable,
+			wantReason: "http_error",
+			wantInMsg:  "500",
+		},
+		{
+			name: "malformed frame json",
+			baseURL: func(t *testing.T) string {
+				return sseServer(t, http.StatusOK, frameHel, `data: {"choices":[`).URL
+			},
+			wantCode:   codes.Internal,
+			wantReason: "decode_error",
+			wantInMsg:  "decoding completions frame",
+		},
+		{
+			name: "stream ends without a done sentinel",
+			baseURL: func(t *testing.T) string {
+				return sseServer(t, http.StatusOK, frameHel, frameLo).URL
+			},
+			wantCode:   codes.Internal,
+			wantReason: "decode_error",
+			wantInMsg:  "without a [DONE] sentinel",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := counterValue(chatProviderErrorsTotal.WithLabelValues(tt.wantReason))
+
+			r := newTestLLM(tt.baseURL(t))
+			req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+			_, err := r.Stream(context.Background(), req, func(string) error { return nil })
+
+			if status.Code(err) != tt.wantCode {
+				t.Fatalf("Stream() code = %v, want %v (err = %v)", status.Code(err), tt.wantCode, err)
+			}
+			if !strings.Contains(err.Error(), tt.wantInMsg) {
+				t.Errorf("error = %q, want it to contain %q", err.Error(), tt.wantInMsg)
+			}
+			if got := counterValue(chatProviderErrorsTotal.WithLabelValues(tt.wantReason)); got != before+1 {
+				t.Errorf("chat_provider_errors_total{reason=%q} = %v, want %v", tt.wantReason, got, before+1)
+			}
+		})
+	}
+}
+
+// A hosted provider explains itself in the response body. Losing that text
+// turns a one-line fix into a debugging session, so it must reach the status.
+func TestOpenAIResponderSurfacesProviderErrorText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		io.WriteString(w, `{"error":{"message":"This model's maximum context length is 128000 tokens.","type":"invalid_request_error"}}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	r := newTestLLM(srv.URL)
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	_, err := r.Stream(context.Background(), req, func(string) error { return nil })
+
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("Stream() code = %v, want Unavailable (err = %v)", status.Code(err), err)
+	}
+	if !strings.Contains(err.Error(), "maximum context length") {
+		t.Errorf("error = %q, want it to quote the provider's message", err.Error())
+	}
+}
+
+// A body that is not OpenAI-shaped still has to come through — Ollama returns
+// plain text, and truncating to nothing would be worse than passing it along.
+func TestOpenAIResponderSurfacesNonJSONErrorText(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		io.WriteString(w, "llama runner process has terminated\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	r := newTestLLM(srv.URL)
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	_, err := r.Stream(context.Background(), req, func(string) error { return nil })
+
+	if !strings.Contains(err.Error(), "llama runner process has terminated") {
+		t.Errorf("error = %q, want it to include the raw body", err.Error())
+	}
+}
+
+func TestOpenAIResponderStopsOnContextCancel(t *testing.T) {
+	srv := hangingSSEServer(t, frameHel, frameLo, frameFinish, frameDone)
+	r := newTestLLM(srv.URL)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A hung-up browser is not a provider fault, so no reason label may move.
+	beforeUnreachable := counterValue(chatProviderErrorsTotal.WithLabelValues("unreachable"))
+	beforeDecode := counterValue(chatProviderErrorsTotal.WithLabelValues("decode_error"))
+
+	count := 0
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	_, err := r.Stream(ctx, req, func(string) error {
+		count++
+		cancel()
+		return nil
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Stream() error = %v, want context.Canceled unwrapped so classifyOutcome sees it", err)
+	}
+	if count != 1 {
+		t.Errorf("emitted %d deltas, want 1 — the loop must check ctx before handling the next frame", count)
+	}
+	if got := counterValue(chatProviderErrorsTotal.WithLabelValues("unreachable")); got != beforeUnreachable {
+		t.Errorf("unreachable counter moved on cancel: %v, want %v", got, beforeUnreachable)
+	}
+	if got := counterValue(chatProviderErrorsTotal.WithLabelValues("decode_error")); got != beforeDecode {
+		t.Errorf("decode_error counter moved on cancel: %v, want %v", got, beforeDecode)
 	}
 }

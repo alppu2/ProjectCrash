@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -90,6 +91,37 @@ const sseDataPrefix = "data:"
 // literal is the only end-of-stream signal.
 const sseDoneSentinel = "[DONE]"
 
+// providerError records why a provider call failed and returns the gRPC status
+// the handler passes through unchanged. Every provider failure path goes
+// through here so the counter and the status code cannot drift apart.
+//
+// Client cancellation must NOT come through here: it is expected, not a fault,
+// and chat.go's classifyOutcome needs the bare context error.
+func providerError(reason string, code codes.Code, format string, args ...any) error {
+	chatProviderErrorsTotal.WithLabelValues(reason).Inc()
+	return status.Errorf(code, format, args...)
+}
+
+// readErrorBody summarises a provider's error response for the status message.
+// Bounded, because an error page can be arbitrarily large and this text ends up
+// in a gRPC status the browser receives. OpenAI-shaped bodies get their
+// message field lifted out; anything else is flattened to one line.
+func readErrorBody(r io.Reader) string {
+	raw, err := io.ReadAll(io.LimitReader(r, 2048))
+	if err != nil || len(raw) == 0 {
+		return "no error body"
+	}
+	var wrapper struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &wrapper) == nil && wrapper.Error.Message != "" {
+		return wrapper.Error.Message
+	}
+	return strings.TrimSpace(strings.ReplaceAll(string(raw), "\n", " "))
+}
+
 // Stream accumulates Usage as frames land and returns it on every exit path,
 // including errors: finish_reason and the token counts arrive in separate
 // frames, so a stream that dies late has still reported real numbers. See the
@@ -104,12 +136,12 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		Messages:      toOpenAIMessages(req.GetMessages()),
 	})
 	if err != nil {
-		return usage, status.Errorf(codes.Internal, "encoding completions request: %v", err)
+		return usage, providerError("config_error", codes.Internal, "encoding completions request: %v", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return usage, status.Errorf(codes.Internal, "building completions request: %v", err)
+		return usage, providerError("config_error", codes.Internal, "building completions request: %v", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if o.APIKey != "" {
@@ -120,9 +152,42 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 
 	resp, err := o.Client.Do(httpReq)
 	if err != nil {
-		return usage, err
+		// A cancelled request surfaces here as a transport error wrapping
+		// ctx.Err(); return the bare context error so the handler classifies
+		// it as cancelled rather than as a dead provider.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return usage, ctxErr
+		}
+		return usage, providerError("unreachable", codes.Unavailable,
+			"llm provider unreachable at %s: %v", o.BaseURL, err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		detail := readErrorBody(resp.Body)
+		switch {
+		case resp.StatusCode == http.StatusNotFound:
+			// A local Ollama 404s on an unpulled model, which is the most
+			// likely misconfiguration here; a hosted provider 404s on a model
+			// name it does not serve. One message covers both.
+			return usage, providerError("model_missing", codes.Unavailable,
+				"model %q not available at %s: %s (for a local Ollama, run: ollama pull %s)",
+				o.Model, o.BaseURL, detail, o.Model)
+		case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+			// codes.Internal, not Unauthenticated: the browser's credentials
+			// are not at fault, our configuration is.
+			return usage, providerError("auth_error", codes.Internal,
+				"llm provider rejected our credentials (HTTP %d): %s; check LLM_API_KEY", resp.StatusCode, detail)
+		case resp.StatusCode == http.StatusTooManyRequests:
+			// Both a transient rate limit and a hard quota exhaustion arrive as
+			// 429; detail is what tells them apart.
+			return usage, providerError("rate_limited", codes.Unavailable,
+				"llm provider rate limit hit (HTTP 429): %s", detail)
+		default:
+			return usage, providerError("http_error", codes.Unavailable,
+				"llm provider returned HTTP %d: %s", resp.StatusCode, detail)
+		}
+	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	// Default 64KB per line is generous for a delta but not for a provider
@@ -149,7 +214,8 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 
 		var chunk openAIChunk
 		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			return usage, status.Errorf(codes.Internal, "decoding completions frame: %v", err)
+			return usage, providerError("decode_error", codes.Internal,
+				"decoding completions frame: %v", err)
 		}
 
 		if chunk.Usage != nil {
@@ -182,11 +248,12 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return usage, ctxErr
 		}
-		return usage, status.Errorf(codes.Internal, "reading completions stream: %v", err)
+		return usage, providerError("decode_error", codes.Internal, "reading completions stream: %v", err)
 	}
 
 	// Ran out of frames without a [DONE]: the provider died mid-generation.
-	return usage, status.Error(codes.Internal, "completions stream ended without a [DONE] sentinel")
+	return usage, providerError("decode_error", codes.Internal,
+		"completions stream ended without a [DONE] sentinel")
 }
 
 // toOpenAIMessages maps proto roles to the wire format's role strings.

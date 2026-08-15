@@ -21,4 +21,9 @@ var (
 		Help:    "Wall time of a chat stream from request to terminal frame.",
 		Buckets: prometheus.DefBuckets,
 	})
+
+	chatProviderErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chat_provider_errors_total",
+		Help: "LLM provider failures by reason. chat_streams_total{status=\"error\"} counts the same failures; this breaks down the cause.",
+	}, []string{"reason"})
 )
