@@ -127,6 +127,15 @@ func validateHistory(msgs []*chatpb.Message) error {
 	if totalBytes > maxHistoryBytes {
 		return status.Errorf(codes.InvalidArgument, "history content is %d bytes, which exceeds the limit of %d bytes", totalBytes, maxHistoryBytes)
 	}
+	// Every message needs a role a provider can map. The OpenAI-compatible
+	// wire format takes "user"/"assistant" strings and has no equivalent of an
+	// unset role, so a ROLE_UNSPECIFIED message anywhere in the history would
+	// have to be guessed at by a Responder. Reject it here instead.
+	for i, m := range msgs {
+		if m.GetRole() == chatpb.Role_ROLE_UNSPECIFIED {
+			return status.Errorf(codes.InvalidArgument, "message %d has no role; every message must be ROLE_USER or ROLE_ASSISTANT", i)
+		}
+	}
 	last := msgs[len(msgs)-1]
 	if last.GetRole() != chatpb.Role_ROLE_USER {
 		return status.Error(codes.InvalidArgument, "last message must have role ROLE_USER")

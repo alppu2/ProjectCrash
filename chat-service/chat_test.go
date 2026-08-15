@@ -197,6 +197,23 @@ func TestValidateHistoryBounds(t *testing.T) {
 			msgs:    []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: strings.Repeat("a", maxHistoryBytes)}},
 			wantErr: false,
 		},
+		{
+			name: "mid-history message with unset role is rejected",
+			msgs: []*chatpb.Message{
+				{Role: chatpb.Role_ROLE_UNSPECIFIED, Content: "who am I"},
+				{Role: chatpb.Role_ROLE_USER, Content: "hi"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "user and assistant roles are accepted",
+			msgs: []*chatpb.Message{
+				{Role: chatpb.Role_ROLE_USER, Content: "hi"},
+				{Role: chatpb.Role_ROLE_ASSISTANT, Content: "hello"},
+				{Role: chatpb.Role_ROLE_USER, Content: "again"},
+			},
+			wantErr: false,
+		},
 	}
 
 	for _, tt := range tests {
