@@ -44,6 +44,41 @@ services:
     networks:
       - micro-network
 
+  ollama:
+    image: ollama/ollama:0.32.6
+    container_name: ollama
+    # No published host port: chat-service reaches this over micro-network, and
+    # keeping it off the host avoids exposing an unauthenticated inference API.
+    # Use `docker compose exec ollama ...` for debugging.
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      # Keep the model resident between turns; a cold VRAM load costs ~33s.
+      OLLAMA_KEEP_ALIVE: 30m
+    # Pull on every start so a fresh volume self-provisions. The pull is a no-op
+    # once the model is in the volume. NOTE: this model name is duplicated in
+    # chat-service/.env as LLM_MODEL — change both together, or requests fail
+    # with reason="model_missing".
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ollama serve &
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        ollama pull llama3.2:3b
+        wait
+    # Healthy only once the model is actually pulled, not merely when the API
+    # answers — otherwise chat-service starts and 404s on its first turn.
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q llama3.2:3b"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 600s
+    gpus: all
+    networks:
+      - micro-network
+
   mongodb:
     image: mongo:latest
     container_name: mongodb
@@ -155,3 +190,4 @@ networks:
 
 volumes:
   mongo-data:
+  ollama-models:
