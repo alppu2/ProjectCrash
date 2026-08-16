@@ -45,7 +45,7 @@ This task runs first on purpose. Every later test asserts against captured frame
 - Consumes: nothing.
 - Produces: an `ollama` service resolvable at `http://ollama:11434` on `micro-network`, healthy only once `llama3.2:3b` is present; the named volume `ollama-models`; and a recorded transcript of real SSE frames that Task 3's test constants must match.
 
-- [ ] **Step 1: Add the Ollama service to `docker-compose.yml`**
+- [x] **Step 1: Add the Ollama service to `docker-compose.yml`**
 
 Add this service block. Place it near `chat-service` rather than at the end, so the two read together:
 
@@ -88,7 +88,7 @@ Add this service block. Place it near `chat-service` rather than at the end, so 
 
 Add `ollama-models:` to the top-level `volumes:` block, following whatever style the existing volume entries use.
 
-- [ ] **Step 2: Start it and wait for healthy**
+- [x] **Step 2: Start it and wait for healthy**
 
 ```bash
 docker compose up -d ollama
@@ -100,7 +100,7 @@ Expected: the pull completes, then STATUS becomes `Up (healthy)`. First run take
 
 If startup fails with a GPU error, confirm the runtime is really there — `docker info --format '{{json .Runtimes}}'` must list `nvidia`. If it does not, drop the `gpus: all` line and continue on CPU; everything else in this plan is unaffected, only slower.
 
-- [ ] **Step 3: Confirm GPU acceleration is actually in use**
+- [x] **Step 3: Confirm GPU acceleration is actually in use**
 
 ```bash
 docker compose exec ollama nvidia-smi --query-gpu=name,memory.used --format=csv
@@ -109,7 +109,7 @@ docker compose exec ollama ollama run llama3.2:3b "say hi" --verbose
 
 Expected: `nvidia-smi` names the GTX 1060, and the `--verbose` output reports an `eval rate` in the tens of tokens per second. Single-digit tokens per second means it fell back to CPU — note that in the report; it does not block the rest of the plan.
 
-- [ ] **Step 4: Capture the real SSE stream — this is the verification gate**
+- [x] **Step 4: Capture the real SSE stream — this is the verification gate**
 
 Ollama publishes no host port, so drive it from a throwaway container on the same network. The `ollama/ollama` image ships neither `curl` nor `wget`, and `docker compose run` conflicts with the service's `container_name`, so use a plain `docker run` with an image that has a HTTP client.
 
@@ -141,7 +141,7 @@ If (4) does not appear, Ollama's compat layer ignores `stream_options`. That is 
 
 If (1), (2) or (3) differ from what Task 3's constants and struct tags assume, fix the constants and tags in Task 3 to match what you captured, and say so in the report. Real frames win over this document.
 
-- [ ] **Step 5: Verify a 404 for a missing model**
+- [x] **Step 5: Verify a 404 for a missing model**
 
 ```bash
 docker run --rm --network projectcrash_micro-network curlimages/curl:latest \
@@ -152,14 +152,14 @@ docker run --rm --network projectcrash_micro-network curlimages/curl:latest \
 
 Expected: prints `404`. Task 4 maps that status to `reason="model_missing"`. If the compat layer returns 400 instead, record the real status and adjust Task 4's status check and its test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docker-compose.yml
 git commit -m "feat(compose): run Ollama as a service with a GPU and a model volume"
 ```
 
-- [ ] **Step 7: Report the transcript**
+- [x] **Step 7: Report the transcript**
 
 Paste the captured frames into the completion report, with a yes/no on each of the four contract points from Step 4 and the observed eval rate. Later tasks read this.
 
@@ -177,7 +177,7 @@ Role mapping in Task 3 is total only if `ROLE_UNSPECIFIED` never reaches it. Tod
 - Consumes: nothing from earlier tasks.
 - Produces: the guarantee that every `*chatpb.Message` reaching a `Responder` has `Role` equal to `Role_ROLE_USER` or `Role_ROLE_ASSISTANT`. Task 3's `toOpenAIMessages` relies on it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add these two cases to the `tests` slice in `TestValidateHistoryBounds` in `chat-service/chat_test.go`, after the existing `"content bytes just under limit is accepted"` case:
 
@@ -201,13 +201,13 @@ Add these two cases to the `tests` slice in `TestValidateHistoryBounds` in `chat
 		},
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd chat-service && go test -run TestValidateHistoryBounds ./...`
 
 Expected: FAIL on `mid-history message with unset role is rejected` with `validateHistory() code = OK, want InvalidArgument (err = <nil>)`. The second case should already pass.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 In `chat-service/chat.go`, inside `validateHistory`, insert this loop immediately after the `maxHistoryBytes` check and before `last := msgs[len(msgs)-1]`:
 
@@ -225,13 +225,13 @@ In `chat-service/chat.go`, inside `validateHistory`, insert this loop immediatel
 
 Keep it as a separate pass after the byte accounting, so an oversized history still reports the size problem first and the existing bounds cases are unaffected.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd chat-service && go test ./... && go vet ./...`
 
 Expected: PASS, no vet output. `TestChatRejectsInvalidHistory`'s `"last message role unset"` case still passes — it now trips this loop instead of the last-message role check, which returns the same status code.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add chat-service/chat.go chat-service/chat_test.go
@@ -255,7 +255,7 @@ git commit -m "fix(chat): reject messages with an unset role anywhere in history
   - Test helpers in `openai_test.go`: `sseServer(t *testing.T, status int, frames ...string) *httptest.Server`, `newTestLLM(baseURL string) *OpenAIResponder`, and the frame constants `frameHel`, `frameLo`, `frameFinish`, `frameUsage`, `frameDone`.
   - Task 4 adds error paths to the same file and calls `providerError`, which Task 4 defines.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `chat-service/openai_test.go`:
 
@@ -476,13 +476,13 @@ func TestOpenAIResponderPropagatesEmitError(t *testing.T) {
 
 `userHistory` already exists in `responder_test.go`, same package — do not redefine it.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd chat-service && go test -run TestOpenAIResponder ./...`
 
 Expected: FAIL to compile with `undefined: OpenAIResponder`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 Create `chat-service/openai.go`:
 
@@ -682,7 +682,7 @@ func toOpenAIMessages(msgs []*chatpb.Message) []openAIMessage {
 
 `firstDelta` is set but not yet read — Task 5 hangs the time-to-first-token observation off it. The non-200 handling and the `reason` labels land in Task 4; this step deliberately returns raw errors for those paths.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd chat-service && go test ./... && go vet ./...`
 
@@ -690,7 +690,7 @@ Expected: PASS, no vet output. `newLLMClient` is unused until Task 6, which Go p
 
 `TestOpenAIResponderKeepsUsageOnMidStreamFailure` passes via the `json.Unmarshal` error on the truncated frame, not the missing sentinel — either way `usage` comes back populated, which is what the test asserts.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add chat-service/openai.go chat-service/openai_test.go
@@ -713,7 +713,7 @@ git commit -m "feat(chat): stream replies from an OpenAI-compatible provider"
   - `func providerError(reason string, code codes.Code, format string, args ...any) error`.
   - Test helper `hangingSSEServer(t *testing.T, frames ...string) *httptest.Server`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `chat-service/openai_test.go`:
 
@@ -912,13 +912,13 @@ Extend `openai_test.go`'s import block with `"strings"`, `"google.golang.org/grp
 
 If Task 1 Step 5 found the compat layer returns something other than 404 for a missing model, change `http.StatusNotFound` here and the status check in Step 3 to the real status.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd chat-service && go test -run TestOpenAIResponder ./...`
 
 Expected: FAIL to compile with `undefined: chatProviderErrorsTotal`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 3a. In `chat-service/metrics.go`, add inside the existing `var (...)` block:
 
@@ -1055,13 +1055,13 @@ The scanner error and the missing-sentinel return become:
 		"completions stream ended without a [DONE] sentinel")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd chat-service && go test ./... && go vet ./...`
 
 Expected: PASS, no vet output.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add chat-service/openai.go chat-service/openai_test.go chat-service/metrics.go
@@ -1088,7 +1088,7 @@ Two collectors, two owners: `chat.go` records tokens because that is where `Usag
   - `func recordTokens(u Usage)`.
   - Test helper `histogramCount(h prometheus.Histogram) uint64`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `chat-service/openai_test.go`:
 
@@ -1194,13 +1194,13 @@ func TestChatRecordsPartialTokenCountsOnError(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cd chat-service && go test -run 'TestOpenAIResponderObserves|TestOpenAIResponderSkips|TestChatRecords' ./...`
 
 Expected: FAIL to compile with `undefined: chatTimeToFirstTokenSeconds` and `undefined: chatTokensTotal`.
 
-- [ ] **Step 3: Write minimal implementation**
+- [x] **Step 3: Write minimal implementation**
 
 3a. In `chat-service/metrics.go`, add to the `var (...)` block:
 
@@ -1262,13 +1262,13 @@ Then replace Task 3's `firstDelta` branch — which currently only flips the fla
 			}
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cd chat-service && go test ./... && go vet ./...`
 
 Expected: PASS, no vet output.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add chat-service/metrics.go chat-service/chat.go chat-service/openai.go chat-service/openai_test.go chat-service/chat_test.go
@@ -1290,7 +1290,7 @@ git commit -m "feat(chat): record token counts and time to first token"
 - Consumes: `OpenAIResponder`, `defaultLLMBaseURL`, `defaultLLMModel`, `newLLMClient` from Task 3; `EchoResponder` and `echoDelay` already in the package; the `ollama` service from Task 1.
 - Produces: `func newResponder() (Responder, error)` and `func envOr(key, fallback string) string`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `chat-service/main_test.go`:
 
@@ -1403,13 +1403,13 @@ func TestNewResponder(t *testing.T) {
 
 `t.Setenv` fails a test that has called `t.Parallel`, so these subtests must stay serial. Do not add `t.Parallel()`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd chat-service && go test -run TestNewResponder ./...`
 
 Expected: FAIL to compile with `undefined: newResponder`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 3a. In `chat-service/main.go`, replace the `RegisterChatServiceServer` call at lines 56-58:
 
@@ -1510,7 +1510,7 @@ LLM_API_KEY=
 
 `chat-service` would survive without it — a down provider yields `Unavailable`, which the frontend already handles — but waiting means the first message after `docker compose up` gets a real reply instead of an error while the model is still downloading.
 
-- [ ] **Step 4: Verify**
+- [x] **Step 4: Verify**
 
 Run:
 
@@ -1522,7 +1522,7 @@ docker compose logs chat-service | grep "responder configured"
 
 Expected: build, vet and tests pass; `docker compose config` reports no error; the log line reads `"responder":"llm"` with `"api_key_set":false` and the `ollama` base URL.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 `.env` is untracked and must not be added.
 
@@ -1544,7 +1544,7 @@ Tests are hermetic by design, so nothing so far has proved the browser gets a re
 - Consumes: everything from Tasks 1-6.
 - Produces: nothing. Record the observed numbers in the completion report.
 
-- [ ] **Step 1: Bring the whole stack up**
+- [x] **Step 1: Bring the whole stack up**
 
 ```bash
 docker compose up -d --build
@@ -1553,13 +1553,13 @@ docker compose ps
 
 Expected: every service up, `ollama` healthy.
 
-- [ ] **Step 2: Verify a real streaming reply**
+- [x] **Step 2: Verify a real streaming reply**
 
 Open the frontend and send a message.
 
 Expected: the reply renders progressively and reads as a genuine model answer rather than an echo of the input. Stop halts it mid-stream. The first request after a `OLLAMA_KEEP_ALIVE` expiry takes roughly 33s to the first token on a GTX 1060.
 
-- [ ] **Step 3: Verify the metrics**
+- [x] **Step 3: Verify the metrics**
 
 `chat-service` publishes no host port, so read them from inside:
 
@@ -1571,7 +1571,7 @@ Expected: `chat_streams_total{status="ok"}` incremented; `chat_time_to_first_tok
 
 For `chat_tokens_total`: non-zero for both directions **if** Task 1 Step 4 confirmed the usage frame. If it did not, both series are absent — expected, not a bug. Say which case holds.
 
-- [ ] **Step 4: Verify the unreachable path**
+- [x] **Step 4: Verify the unreachable path**
 
 ```bash
 docker compose stop ollama
@@ -1581,25 +1581,25 @@ Send a message in the frontend.
 
 Expected: the UI shows an error, rolls the turn back, and restores the typed text. `chat_provider_errors_total{reason="unreachable"}` and `chat_streams_total{status="error"}` each increment by 1. Then `docker compose start ollama`.
 
-- [ ] **Step 5: Verify the model_missing path**
+- [x] **Step 5: Verify the model_missing path**
 
 Set `LLM_MODEL=nope` in `chat-service/.env`, run `docker compose up -d chat-service`, and send a message.
 
 Expected: `chat_provider_errors_total{reason="model_missing"}` increments, and the `chat-service` log carries the error naming the fix — `model "nope" not available at http://ollama:11434/v1; for a local Ollama run: ollama pull nope`.
 
-- [ ] **Step 6: Verify the cancel path is not counted as an error**
+- [x] **Step 6: Verify the cancel path is not counted as an error**
 
 Restore `LLM_MODEL=llama3.2:3b`, `docker compose up -d chat-service`, send a long prompt and hit Stop mid-reply.
 
 Expected: `chat_streams_total{status="cancelled"}` increments, and **no** `chat_provider_errors_total` series moves.
 
-- [ ] **Step 7: Confirm traces still cross the new hop**
+- [x] **Step 7: Confirm traces still cross the new hop**
 
 Open Grafana at `:3000`, find the chat trace in Tempo.
 
 Expected: the span tree is intact with `chat.history_len` set. The outbound HTTP call to Ollama will **not** appear as a child span — this plan adds no `otelhttp` transport. Note that as a follow-up rather than a defect; it is out of scope here.
 
-- [ ] **Step 8: Report**
+- [x] **Step 8: Report**
 
 No commit — `.env` is untracked and nothing else changed. Report the observed cold and warm time-to-first-token, whether token counts materialised, the eval rate from Task 1 Step 3, and any step whose expectation did not hold.
 
