@@ -11,11 +11,37 @@ export interface ChatMessage {
 // conversation does not grow the request without bound.
 const MAX_HISTORY = 20;
 
+// The message cap alone is not enough: chat.go also rejects a history whose
+// content exceeds maxHistoryBytes (32768). An echo reply was as short as its
+// prompt, so the two caps could never collide; a real model answers with
+// kilobytes, and a 20-message window crosses 32KB after roughly ten exchanges.
+// Past that point every send would fail InvalidArgument for the rest of the
+// session, since the rollback restores the same oversized history. Kept below
+// the server's limit so the turn being sent still fits.
+const MAX_HISTORY_BYTES = 24000;
+
+// Matches the server's accounting, which measures len(content) in bytes, not
+// UTF-16 code units — an emoji or an accented character costs more than one.
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
 // The window has to begin on a user turn, so snapping forward can return
-// MAX_HISTORY - 1 messages.
+// fewer messages than either cap allows.
 function trimHistory(history: ChatMessage[]): ChatMessage[] {
-  if (history.length <= MAX_HISTORY) return history;
-  let start = history.length - MAX_HISTORY;
+  let start = Math.max(0, history.length - MAX_HISTORY);
+  let bytes = history
+    .slice(start)
+    .reduce((total, m) => total + byteLength(m.content), 0);
+
+  // Drop from the front until the window fits, always keeping the last
+  // message: it is the turn being sent, and a single oversized message is the
+  // server's to reject.
+  while (bytes > MAX_HISTORY_BYTES && start < history.length - 1) {
+    bytes -= byteLength(history[start].content);
+    start += 1;
+  }
+
   while (start < history.length && history[start].role !== Role.USER) {
     start += 1;
   }
