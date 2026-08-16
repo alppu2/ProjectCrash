@@ -184,6 +184,14 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 			// 429; detail is what tells them apart.
 			return usage, providerError("rate_limited", codes.Unavailable,
 				"llm provider rate limit hit (HTTP 429): %s", detail)
+		case resp.StatusCode >= 400 && resp.StatusCode < 500:
+			// codes.Internal, not Unavailable: a 4xx is our request being wrong
+			// — a too-long context, an unsupported parameter — and can never
+			// succeed on retry. Unavailable is the canonical retryable code,
+			// and CLAUDE.md puts retries in frontend/src/api.ts, so handing one
+			// out here would invite a retry loop against a permanent failure.
+			return usage, providerError("http_error", codes.Internal,
+				"llm provider rejected the request (HTTP %d): %s", resp.StatusCode, detail)
 		default:
 			return usage, providerError("http_error", codes.Unavailable,
 				"llm provider returned HTTP %d: %s", resp.StatusCode, detail)
@@ -253,7 +261,12 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		return usage, providerError("decode_error", codes.Internal, "reading completions stream: %v", err)
 	}
 
-	// Ran out of frames without a [DONE]: the provider died mid-generation.
+	// Ran out of frames without a [DONE]: the provider died mid-generation —
+	// unless the client hung up on the last frame, which reaches here with a
+	// clean EOF and must stay a cancellation rather than a provider fault.
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return usage, ctxErr
+	}
 	return usage, providerError("decode_error", codes.Internal,
 		"completions stream ended without a [DONE] sentinel")
 }

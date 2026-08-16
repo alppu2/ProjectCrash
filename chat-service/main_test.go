@@ -82,6 +82,26 @@ func TestNewResponder(t *testing.T) {
 			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "http://[::1"},
 			wantErr: true,
 		},
+		{
+			// The natural typo here: compose service names are written bare
+			// everywhere else in this repo. url.Parse accepts it as an opaque
+			// URL, so only a scheme check catches it — otherwise the service
+			// boots healthy and fails every turn as reason="unreachable",
+			// sending an operator after a container that is working fine.
+			name:    "a scheme-less LLM_BASE_URL fails at startup",
+			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "ollama:11434/v1"},
+			wantErr: true,
+		},
+		{
+			name:    "a non-URL LLM_BASE_URL fails at startup",
+			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "not a url at all"},
+			wantErr: true,
+		},
+		{
+			name:    "a hostless LLM_BASE_URL fails at startup",
+			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "http:///v1"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

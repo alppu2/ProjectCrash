@@ -91,8 +91,8 @@ func newResponder() (Responder, error) {
 
 	case "llm":
 		baseURL := envOr("LLM_BASE_URL", defaultLLMBaseURL)
-		if _, err := url.Parse(baseURL); err != nil {
-			return nil, fmt.Errorf("LLM_BASE_URL %q is not a valid URL: %w", baseURL, err)
+		if err := validateBaseURL(baseURL); err != nil {
+			return nil, err
 		}
 		model := envOr("LLM_MODEL", defaultLLMModel)
 		apiKey := os.Getenv("LLM_API_KEY")
@@ -111,6 +111,26 @@ func newResponder() (Responder, error) {
 	default:
 		return nil, fmt.Errorf("unknown RESPONDER %q, want echo or llm", name)
 	}
+}
+
+// validateBaseURL rejects a base URL that would boot cleanly and then fail
+// every turn. url.Parse alone is almost no check: "ollama:11434/v1" parses as
+// an opaque URL and "not a url at all" as a bare path, and both only fail at
+// request time — as reason="unreachable", which points an operator at a
+// provider that is in fact healthy. Dropping the scheme is the likely typo,
+// since compose service names are written bare everywhere else in this repo.
+func validateBaseURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("LLM_BASE_URL %q is not a valid URL: %w", raw, err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("LLM_BASE_URL %q needs an http:// or https:// scheme", raw)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("LLM_BASE_URL %q has no host", raw)
+	}
+	return nil
 }
 
 // envOr treats an empty variable as unset, so a commented-out or blank line in

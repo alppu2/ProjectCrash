@@ -273,6 +273,57 @@ func TestOpenAIResponderMissingDoneSentinelKeepsUsage(t *testing.T) {
 	}
 }
 
+// roundTripperFunc adapts a func to http.RoundTripper.
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// bodyTransport answers every request with the given body, read from memory so
+// the body never observes the request context. It is the only way to test a
+// clean end-of-body: a real connection reports a cancelled read instead.
+func bodyTransport(body string) http.RoundTripper {
+	return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})
+}
+
+// A hangup that races a clean end-of-body reaches the missing-[DONE] exit with
+// scanner.Err() nil, so that exit needs the same ctx check as the others.
+// Without it a browser disconnect is reported as a provider decode fault.
+func TestOpenAIResponderCancelAtEndOfStreamIsNotAProviderError(t *testing.T) {
+	// An httptest server cannot reach this exit reliably: once the context is
+	// cancelled, the real transport usually fails the body read, which the
+	// scanner.Err() branch already handles. Serving the body from memory
+	// guarantees the clean EOF that leaves scanner.Err() nil.
+	r := newTestLLM("http://stub.invalid/v1")
+	// Exactly one line, with no trailing blank: any further line — even an empty
+	// separator — would give the loop another turn, and its ctx check would
+	// catch the cancellation before the exit under test.
+	r.Client = &http.Client{Transport: bodyTransport(frameHel + "\n")}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	before := counterValue(chatProviderErrorsTotal.WithLabelValues("decode_error"))
+
+	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
+	_, err := r.Stream(ctx, req, func(string) error {
+		cancel()
+		return nil
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Stream() error = %v, want context.Canceled unwrapped so classifyOutcome sees it", err)
+	}
+	if got := counterValue(chatProviderErrorsTotal.WithLabelValues("decode_error")); got != before {
+		t.Errorf("decode_error counter = %v, want unchanged at %v — a hangup is not a provider fault", got, before)
+	}
+}
+
 // The SSE grammar makes the space after "data:" optional; a self-hosted
 // gateway in front of an OpenAI-compatible provider may omit it even though
 // Ollama and OpenAI both send it.
@@ -366,13 +417,26 @@ func TestOpenAIResponderProviderErrors(t *testing.T) {
 			wantInMsg:  "rate limit",
 		},
 		{
-			name: "other non-200",
+			name: "other 5xx is retryable",
 			baseURL: func(t *testing.T) string {
 				return sseServer(t, http.StatusInternalServerError).URL
 			},
 			wantCode:   codes.Unavailable,
 			wantReason: "http_error",
 			wantInMsg:  "500",
+		},
+		{
+			// Unavailable is the canonical retryable code, and a retry
+			// interceptor in frontend/src/api.ts is where CLAUDE.md says retries
+			// belong. A 400 can never succeed on retry, so it must not carry the
+			// code that invites one.
+			name: "other 4xx is not retryable",
+			baseURL: func(t *testing.T) string {
+				return sseServer(t, http.StatusBadRequest).URL
+			},
+			wantCode:   codes.Internal,
+			wantReason: "http_error",
+			wantInMsg:  "400",
 		},
 		{
 			name: "malformed frame json",
@@ -428,8 +492,8 @@ func TestOpenAIResponderSurfacesProviderErrorText(t *testing.T) {
 	req := &chatpb.ChatRequest{Messages: userHistory("hi")}
 	_, err := r.Stream(context.Background(), req, func(string) error { return nil })
 
-	if status.Code(err) != codes.Unavailable {
-		t.Fatalf("Stream() code = %v, want Unavailable (err = %v)", status.Code(err), err)
+	if status.Code(err) != codes.Internal {
+		t.Fatalf("Stream() code = %v, want Internal — a 400 is permanent (err = %v)", status.Code(err), err)
 	}
 	if !strings.Contains(err.Error(), "maximum context length") {
 		t.Errorf("error = %q, want it to quote the provider's message", err.Error())
