@@ -38,9 +38,13 @@ Frontend (`cd frontend`):
 ```bash
 npm run dev        # Vite, opens browser
 npm run build      # tsc -b && vite build
+npm test           # vitest run (jsdom); npm run test:watch to iterate
 npm run lint
 npm run format     # prettier --write src/
 ```
+
+`npm run format:check` fails on files this repo has never formatted — check
+whether a warning predates your change before reformatting anything.
 
 Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin), Prometheus `:9090`, RabbitMQ management `:15672`, Tempo `:3200`, Loki `:3100`, MongoDB `:27017`, inventory-service metrics `:9092`.
 

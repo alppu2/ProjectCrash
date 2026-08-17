@@ -9,7 +9,7 @@ export interface ChatMessage {
 
 // The server is stateless, so the client owns the history. Cap it so a long
 // conversation does not grow the request without bound.
-const MAX_HISTORY = 20;
+export const MAX_HISTORY = 20;
 
 // The message cap alone is not enough: chat.go also rejects a history whose
 // content exceeds maxHistoryBytes (32768). An echo reply was as short as its
@@ -18,7 +18,7 @@ const MAX_HISTORY = 20;
 // Past that point every send would fail InvalidArgument for the rest of the
 // session, since the rollback restores the same oversized history. Kept below
 // the server's limit so the turn being sent still fits.
-const MAX_HISTORY_BYTES = 24000;
+export const MAX_HISTORY_BYTES = 24000;
 
 // Matches the server's accounting, which measures len(content) in bytes, not
 // UTF-16 code units — an emoji or an accented character costs more than one.
@@ -28,7 +28,10 @@ function byteLength(text: string): number {
 
 // The window has to begin on a user turn, so snapping forward can return
 // fewer messages than either cap allows.
-function trimHistory(history: ChatMessage[]): ChatMessage[] {
+//
+// Exported for tests: both caps mirror server-side limits in chat.go, and a
+// mismatch is invisible until a long conversation starts failing.
+export function trimHistory(history: ChatMessage[]): ChatMessage[] {
   let start = Math.max(0, history.length - MAX_HISTORY);
   let bytes = history
     .slice(start)
