@@ -11,7 +11,7 @@ Deploy target: a public domain (not yet registered — see [Status](#status)).
 | `frontend` | React 19 + TypeScript + Vite. Talks gRPC-Web, renders streamed chat deltas token by token, supports mid-stream cancel. |
 | `envoy` | Single public entry point. gRPC-Web ↔ gRPC translation, CORS, path-prefix routing, round-robin load balancing over service replicas. |
 | `chat-service` | Go. Server-streaming `Chat` RPC emitting `ChatChunk` frames. Stateless — the client carries conversation history — so any replica can serve any turn. Replies come from an echo stub or a real model, selected by `RESPONDER`. |
-| `ollama` | Optional. Runs `llama3.2:3b` locally behind an OpenAI-compatible API, so the chat answers with a real model at zero API cost. Opt-in via the `llm` compose profile. |
+| `ollama` | Local development only. Runs `llama3.2:3b` behind an OpenAI-compatible API, so the chat answers with a real model at zero API cost. Opt-in via the `llm` compose profile; deployment points the same responder at a hosted endpoint instead. |
 | `order-service` | Go. gRPC ingest: persists to MongoDB, publishes to RabbitMQ. The horizontally scaled service. |
 | `inventory-service` | Go. RabbitMQ consumer, with trace context carried across the queue boundary. |
 | `prometheus` / `grafana` / `loki` / `tempo` / `promtail` | Metrics, dashboards, log aggregation, distributed tracing. Every service ships all three signals. |
@@ -30,7 +30,7 @@ Things this stack demonstrates deliberately, rather than by accident:
 
 ## Running it locally
 
-Requires Docker and Docker Compose.
+Requires Docker and Docker Compose. The optional `llm` profile additionally requires an NVIDIA GPU and the NVIDIA Container Toolkit.
 
 ```bash
 # One-time: each service reads its own env file
@@ -52,7 +52,9 @@ The chat replies with the echo stub out of the box, which needs no model and no 
 docker compose --profile llm up --build
 ```
 
-That adds an `ollama` container which pulls `llama3.2:3b` (~2GB) on first start and serves it over the compose network — nothing is published to the host. It claims the GPU via `gpus: all`; without an NVIDIA container runtime, drop that line and it runs on CPU, slower. The same responder speaks to any OpenAI-compatible provider: point `LLM_BASE_URL` at one and set `LLM_API_KEY`, no code change.
+That adds an `ollama` container which pulls `llama3.2:3b` (~2GB) on first start and serves it over the compose network — nothing is published to the host, so the unauthenticated inference API is not reachable from outside Docker. It claims the GPU via `gpus: all`, which needs an NVIDIA GPU and the NVIDIA Container Toolkit; without them the profile fails to start. Removing that line from `docker-compose.yml` falls back to CPU inference, which works for a 3B model but answers in tens of seconds rather than a second or two.
+
+Ollama is a local development dependency, not a deployed one. Deployment drops the `llm` profile and points the same responder at a hosted OpenAI-compatible endpoint: keep `RESPONDER=llm`, set `LLM_BASE_URL` and `LLM_API_KEY`, change no code and no compose. Any `docker compose up` without `--profile llm` skips the container outright, and `chat-service` does not wait on it.
 
 To watch load balancing under scale:
 
