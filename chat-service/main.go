@@ -70,8 +70,8 @@ func main() {
 	}
 }
 
-// echoDelay reads ECHO_DELAY_MS, falling back to defaultEchoDelay. Lowering it
-// to 0 makes load tests run without artificial latency.
+// echoDelay reads ECHO_DELAY_MS. Set it to 0 for load tests without
+// artificial latency.
 func echoDelay() time.Duration {
 	if n, err := strconv.Atoi(os.Getenv("ECHO_DELAY_MS")); err == nil && n >= 0 {
 		return time.Duration(n) * time.Millisecond
@@ -80,9 +80,9 @@ func echoDelay() time.Duration {
 }
 
 // newResponder builds the Responder named by RESPONDER, defaulting to the echo
-// stub so ghz load tests and CI run with no model and no GPU. An unrecognised
-// name is a startup error rather than a silent fallback: a demo that quietly
-// answers with echo looks like a working model.
+// stub so load tests and CI run with no model and no GPU. An unknown name is a
+// startup error, not a silent fallback: a demo quietly answering with echo
+// looks like a working model.
 func newResponder() (Responder, error) {
 	switch name := envOr("RESPONDER", "echo"); name {
 	case "echo":
@@ -96,12 +96,11 @@ func newResponder() (Responder, error) {
 		}
 		model := envOr("LLM_MODEL", defaultLLMModel)
 		apiKey := os.Getenv("LLM_API_KEY")
-		// The key itself is never logged; whether one is set is worth knowing
-		// when a provider starts returning 401.
+		// Logs whether a key is set, never the key. Worth knowing on a 401.
 		slog.Info("responder configured", "responder", "llm",
 			"base_url", baseURL, "model", model, "api_key_set", apiKey != "")
 		return &OpenAIResponder{
-			// Trimmed because the request path is appended directly.
+			// The request path is appended directly.
 			BaseURL: strings.TrimSuffix(baseURL, "/"),
 			Model:   model,
 			APIKey:  apiKey,
@@ -113,12 +112,10 @@ func newResponder() (Responder, error) {
 	}
 }
 
-// validateBaseURL rejects a base URL that would boot cleanly and then fail
-// every turn. url.Parse alone is almost no check: "ollama:11434/v1" parses as
-// an opaque URL and "not a url at all" as a bare path, and both only fail at
-// request time — as reason="unreachable", which points an operator at a
-// provider that is in fact healthy. Dropping the scheme is the likely typo,
-// since compose service names are written bare everywhere else in this repo.
+// validateBaseURL rejects a URL that would boot cleanly and fail every turn.
+// url.Parse alone accepts "ollama:11434/v1" (opaque) and "not a url" (bare
+// path); both surface later as reason="unreachable", pointing an operator at a
+// healthy provider. A missing scheme is the likely typo.
 func validateBaseURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -133,8 +130,8 @@ func validateBaseURL(raw string) error {
 	return nil
 }
 
-// envOr treats an empty variable as unset, so a commented-out or blank line in
-// .env falls back to the default instead of producing an empty model name.
+// envOr treats an empty variable as unset, so a blank line in .env falls back
+// to the default instead of producing an empty model name.
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

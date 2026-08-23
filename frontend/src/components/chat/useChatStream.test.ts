@@ -9,17 +9,16 @@ import useChatStream, {
 import { ChatChunk, Role } from '../../gen/chat_pb';
 import { chatClient } from '../../api';
 
-// The transport is the one thing a unit test cannot have: api.ts points at
-// Envoy on :8080. Only chat() is stubbed, so everything the hook does with the
-// stream — accumulation, rollback, history assembly — is the real code.
+// api.ts points at Envoy on :8080. Only chat() is stubbed, so accumulation,
+// rollback and history assembly are all the real code.
 vi.mock('../../api', () => ({
   chatClient: { chat: vi.fn() },
 }));
 
 const mockChat = vi.mocked(chatClient.chat);
 
-// Mirrors chat.go's maxHistoryBytes. The client cap is deliberately lower;
-// this is the wall the server actually rejects at.
+// chat.go's maxHistoryBytes — the wall the server rejects at. The client cap
+// is deliberately lower.
 const SERVER_MAX_HISTORY_BYTES = 32768;
 
 function user(content: string): ChatMessage {
@@ -30,8 +29,8 @@ function assistant(content: string): ChatMessage {
   return { role: Role.ASSISTANT, content };
 }
 
-// A conversation of `turns` exchanges, each assistant reply `replyBytes` long —
-// the shape a real model produces, and the one an echo stub never could.
+// `turns` exchanges with `replyBytes`-long replies: the shape a real model
+// produces and an echo stub never could.
 function conversation(turns: number, replyBytes: number): ChatMessage[] {
   const history: ChatMessage[] = [];
   for (let i = 0; i < turns; i += 1) {
@@ -41,8 +40,8 @@ function conversation(turns: number, replyBytes: number): ChatMessage[] {
   return history;
 }
 
-// Takes anything with a content field, so it measures both ChatMessage[] and
-// the PartialMessage<Message>[] that reaches the transport.
+// Structural, so it measures both ChatMessage[] and the
+// PartialMessage<Message>[] that reaches the transport.
 function totalBytes(history: readonly { content?: string }[]): number {
   return history.reduce(
     (total, m) => total + new TextEncoder().encode(m.content ?? '').length,
@@ -79,12 +78,10 @@ describe('trimHistory', () => {
     expect(trimHistory(history)[0].role).toBe(Role.USER);
   });
 
-  // The regression this suite exists for: with a count-only cap, a real
-  // model's replies push a 20-message window past the server's byte limit,
-  // and every later send fails InvalidArgument for the rest of the session.
+  // The regression this suite exists for: with a count-only cap, real replies
+  // push the window past the server's byte limit and every later send fails.
   it('keeps a long conversation under the server byte limit', () => {
-    // 4KB replies, so the count-capped window of MAX_HISTORY messages still
-    // carries ~40KB — past what the server accepts.
+    // 4KB replies: a count-capped window still carries ~40KB.
     const history = [...conversation(12, 4000), user('one more question')];
 
     const trimmed = trimHistory(history);
@@ -97,9 +94,8 @@ describe('trimHistory', () => {
   });
 
   it('measures content in UTF-8 bytes, as the server does', () => {
-    // Four bytes each in UTF-8, two UTF-16 code units each: counting
-    // JavaScript string length would undercount by half and let an oversized
-    // history through.
+    // Four UTF-8 bytes, two UTF-16 code units each: String.length would
+    // undercount by half and let an oversized history through.
     const emoji = '😀'.repeat(MAX_HISTORY_BYTES / 4);
     const history = [user(emoji), assistant(emoji), user('short')];
 
@@ -110,9 +106,8 @@ describe('trimHistory', () => {
   });
 
   it('keeps the message being sent even when it alone exceeds the cap', () => {
-    // Trimming cannot save this one — the server rejects it and the UI shows
-    // the error. Dropping it here would send an empty history instead, which
-    // is a worse error.
+    // Trimming cannot save this one. Dropping it would send an empty history
+    // instead, which is a worse error.
     const oversized = user('x'.repeat(MAX_HISTORY_BYTES + 1));
     const history = [user('hi'), assistant('hello'), oversized];
 
@@ -125,8 +120,7 @@ describe('useChatStream', () => {
     mockChat.mockReset();
   });
 
-  // The wedge as a user meets it: ten-odd exchanges with a real model, and
-  // then every further message fails. The rollback in send() restores the same
+  // The wedge as a user meets it: send()'s rollback restores the same
   // oversized history, so the failure repeats until the page is reloaded.
   it('keeps sending successfully through a long conversation', async () => {
     const requests: { content?: string }[][] = [];
@@ -134,8 +128,7 @@ describe('useChatStream', () => {
       const messages = req.messages ?? [];
       requests.push(messages);
       if (totalBytes(messages) > SERVER_MAX_HISTORY_BYTES) {
-        // What chat.go returns; the hook surfaces it as an error and rolls the
-        // turn back.
+        // What chat.go returns; the hook surfaces it and rolls the turn back.
         throw new Error('history content exceeds the limit of 32768 bytes');
       }
       return (async function* () {
@@ -155,8 +148,7 @@ describe('useChatStream', () => {
     for (const messages of requests) {
       expect(totalBytes(messages)).toBeLessThanOrEqual(MAX_HISTORY_BYTES);
     }
-    // Every turn produced a reply, so nothing was rolled back: 12 questions
-    // and 12 answers.
+    // Nothing was rolled back: 12 questions and 12 answers.
     expect(result.current.messages).toHaveLength(24);
   });
 

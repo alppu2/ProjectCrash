@@ -15,9 +15,8 @@ func TestNewResponder(t *testing.T) {
 	}{
 		{
 			name: "defaults to echo so an empty .env still boots",
-			// Set explicitly empty rather than left unset: envOr treats an
-			// empty value as absent, and this keeps the case honest on a
-			// machine that exports RESPONDER in its shell.
+			// Explicitly empty, not unset: envOr treats both as absent, and
+			// this survives a shell that exports RESPONDER.
 			env: map[string]string{"RESPONDER": ""},
 			check: func(t *testing.T, r Responder) {
 				if _, ok := r.(*EchoResponder); !ok {
@@ -57,8 +56,7 @@ func TestNewResponder(t *testing.T) {
 			},
 			check: func(t *testing.T, r Responder) {
 				o := r.(*OpenAIResponder)
-				// The trailing slash is trimmed, or request paths become
-				// //chat/completions.
+				// Trimmed, or request paths become //chat/completions.
 				if o.BaseURL != "https://api.groq.com/openai/v1" {
 					t.Errorf("BaseURL = %q, want %q", o.BaseURL, "https://api.groq.com/openai/v1")
 				}
@@ -71,8 +69,7 @@ func TestNewResponder(t *testing.T) {
 			},
 		},
 		{
-			// A silent fallback to echo would make a misconfigured demo look
-			// like a working model.
+			// A silent fallback would make a misconfigured demo look working.
 			name:    "an unknown RESPONDER is a startup error, never a fallback",
 			env:     map[string]string{"RESPONDER": "ollama"},
 			wantErr: true,
@@ -83,11 +80,9 @@ func TestNewResponder(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			// The natural typo here: compose service names are written bare
-			// everywhere else in this repo. url.Parse accepts it as an opaque
-			// URL, so only a scheme check catches it — otherwise the service
-			// boots healthy and fails every turn as reason="unreachable",
-			// sending an operator after a container that is working fine.
+			// url.Parse accepts a bare host as an opaque URL, so only a scheme
+			// check catches this. Otherwise the service boots healthy and fails
+			// every turn as reason="unreachable".
 			name:    "a scheme-less LLM_BASE_URL fails at startup",
 			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "ollama:11434/v1"},
 			wantErr: true,
@@ -125,11 +120,9 @@ func TestNewResponder(t *testing.T) {
 	}
 }
 
-// TestNewLLMClientTimeout guards the one thing standing between a wedged
-// provider and a permanently pinned goroutine: newLLMClient must set a
-// ResponseHeaderTimeout on its transport, and must NOT set an overall
-// Client.Timeout, because a whole-request timeout would kill long
-// generations.
+// newLLMClient must set ResponseHeaderTimeout — the only thing between a
+// wedged provider and a pinned goroutine — and must NOT set Client.Timeout,
+// which would kill long generations.
 func TestNewLLMClientTimeout(t *testing.T) {
 	client := newLLMClient()
 

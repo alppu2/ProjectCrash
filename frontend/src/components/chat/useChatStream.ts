@@ -7,39 +7,31 @@ export interface ChatMessage {
   content: string;
 }
 
-// The server is stateless, so the client owns the history. Cap it so a long
-// conversation does not grow the request without bound.
+// The server is stateless, so the client owns the history.
 export const MAX_HISTORY = 20;
 
-// The message cap alone is not enough: chat.go also rejects a history whose
-// content exceeds maxHistoryBytes (32768). An echo reply was as short as its
-// prompt, so the two caps could never collide; a real model answers with
-// kilobytes, and a 20-message window crosses 32KB after roughly ten exchanges.
-// Past that point every send would fail InvalidArgument for the rest of the
-// session, since the rollback restores the same oversized history. Kept below
-// the server's limit so the turn being sent still fits.
+// Kept under chat.go's maxHistoryBytes (32768). The message cap alone is not
+// enough: 20 messages of model output crosses 32KB after ~10 exchanges, and
+// past that point every send fails InvalidArgument for the rest of the session
+// because the rollback restores the same oversized history.
 export const MAX_HISTORY_BYTES = 24000;
 
-// Matches the server's accounting, which measures len(content) in bytes, not
-// UTF-16 code units — an emoji or an accented character costs more than one.
+// Bytes, not UTF-16 code units, to match the server's len(content).
 function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-// The window has to begin on a user turn, so snapping forward can return
-// fewer messages than either cap allows.
-//
-// Exported for tests: both caps mirror server-side limits in chat.go, and a
-// mismatch is invisible until a long conversation starts failing.
+// The window has to begin on a user turn, so snapping forward can return fewer
+// messages than either cap allows. Exported for tests: both caps mirror
+// chat.go, and a mismatch is invisible until a long conversation fails.
 export function trimHistory(history: ChatMessage[]): ChatMessage[] {
   let start = Math.max(0, history.length - MAX_HISTORY);
   let bytes = history
     .slice(start)
     .reduce((total, m) => total + byteLength(m.content), 0);
 
-  // Drop from the front until the window fits, always keeping the last
-  // message: it is the turn being sent, and a single oversized message is the
-  // server's to reject.
+  // Always keep the last message: it is the turn being sent, and a single
+  // oversized message is the server's to reject.
   while (bytes > MAX_HISTORY_BYTES && start < history.length - 1) {
     bytes -= byteLength(history[start].content);
     start += 1;
@@ -56,11 +48,8 @@ function useChatStream() {
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  // Backs the concurrency guard below. A ref (rather than the `streaming`
-  // state value) avoids a stale closure: `streaming` is only current as of
-  // the render that created this callback, so two overlapping calls to
-  // send() could both read streaming === false before either commits its
-  // setStreaming(true).
+  // A ref, not the `streaming` state: two overlapping send() calls would both
+  // read a stale streaming === false before either setStreaming(true) lands.
   const streamingRef = useRef(false);
 
   useEffect(() => () => abortRef.current?.abort(), []);
@@ -78,11 +67,9 @@ function useChatStream() {
         ...messages,
         { role: Role.USER, content: trimmed },
       ];
-      // Fixed at send time so the delta loop below always writes to this
-      // message, even if another send() starts (and appends its own
-      // placeholder) before this stream finishes.
+      // Fixed at send time so the delta loop keeps writing to this message
+      // even if another send() appends its own placeholder first.
       const idx = history.length;
-      // Append an empty assistant message that the deltas accumulate into.
       setMessages([...history, { role: Role.ASSISTANT, content: '' }]);
       streamingRef.current = true;
       setStreaming(true);
@@ -116,9 +103,8 @@ function useChatStream() {
           setError(err instanceof Error ? err.message : 'Unknown error');
         }
       } finally {
-        // Drop the user message along with its placeholder: an empty assistant
-        // message renders as a blank bubble and is replayed as an empty turn in
-        // every later request.
+        // Drop the user message too: a blank placeholder would render as an
+        // empty bubble and replay as an empty turn in every later request.
         if (!produced) setMessages((prev) => prev.slice(0, idx - 1));
         streamingRef.current = false;
         setStreaming(false);

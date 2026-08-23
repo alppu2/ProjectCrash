@@ -19,9 +19,8 @@ import (
 	chatpb "chat-service/chat"
 )
 
-// Frames as captured from a real provider in Task 1 Step 4. Text deltas arrive
-// at choices[0].delta.content; finish_reason arrives on a frame whose delta is
-// empty; token counts arrive in a trailing usage-only frame with no choices.
+// Frames as captured from a real provider: deltas, finish_reason, and usage
+// each arrive in a separate frame.
 const (
 	frameHel    = `data: {"choices":[{"index":0,"delta":{"content":"Hel"}}]}`
 	frameLo     = `data: {"choices":[{"index":0,"delta":{"content":"lo"}}]}`
@@ -30,9 +29,8 @@ const (
 	frameDone   = `data: [DONE]`
 )
 
-// sseServer serves the given frames as a server-sent-event stream, flushing
-// each so a reading client sees them arrive separately rather than in one
-// buffer. Frames are written verbatim, so a test can pass malformed input.
+// sseServer flushes each frame so the client sees them arrive separately.
+// Frames are written verbatim, so a test can pass malformed input.
 func sseServer(t *testing.T, status int, frames ...string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -65,8 +63,8 @@ func TestOpenAIResponderStreamsDeltasAndUsage(t *testing.T) {
 		t.Fatalf("Stream() error = %v, want nil", err)
 	}
 
-	// Deltas travel verbatim: the provider already includes leading spaces, so
-	// unlike EchoResponder there is no separator to reconstruct.
+	// Verbatim: the provider includes leading spaces, so unlike EchoResponder
+	// there is no separator to reconstruct.
 	if want := []string{"Hel", "lo"}; !slices.Equal(got, want) {
 		t.Errorf("deltas = %q, want %q (empty-delta frames must be skipped)", got, want)
 	}
@@ -81,9 +79,8 @@ func TestOpenAIResponderStreamsDeltasAndUsage(t *testing.T) {
 	}
 }
 
-// A provider that ignores stream_options sends no usage frame. The stream must
-// still succeed with whatever it did report — Ollama's compat layer may behave
-// this way, and a missing token count is not a failed turn.
+// A provider that ignores stream_options sends no usage frame. A missing token
+// count is not a failed turn.
 func TestOpenAIResponderToleratesMissingUsageFrame(t *testing.T) {
 	srv := sseServer(t, http.StatusOK, frameHel, frameFinish, frameDone)
 	r := newTestLLM(srv.URL)
@@ -101,9 +98,8 @@ func TestOpenAIResponderToleratesMissingUsageFrame(t *testing.T) {
 	}
 }
 
-// Partial usage must survive an error: finish_reason and usage arrive in
-// separate frames, so a stream that dies after them has still reported them.
-// This is what the Usage doc comment in responder.go requires.
+// Partial usage must survive an error — see the Usage doc comment in
+// responder.go.
 func TestOpenAIResponderKeepsUsageOnMidStreamFailure(t *testing.T) {
 	srv := sseServer(t, http.StatusOK, frameHel, frameFinish, frameUsage, `data: {"choices":[`)
 	r := newTestLLM(srv.URL)
@@ -169,8 +165,7 @@ func TestOpenAIResponderRequestShape(t *testing.T) {
 	if !body.StreamOptions.IncludeUsage {
 		t.Error("stream_options.include_usage = false, want true — without it there are no token counts")
 	}
-	// An empty APIKey must send no header at all: a local Ollama needs none,
-	// and "Bearer " with nothing after it is a malformed credential.
+	// No header at all: "Bearer " with nothing after it is malformed.
 	if auth != "" {
 		t.Errorf("Authorization = %q, want it absent when APIKey is empty", auth)
 	}
@@ -217,12 +212,9 @@ func TestOpenAIResponderPropagatesEmitError(t *testing.T) {
 	}
 }
 
-// A hung-up browser must surface as a bare context.Canceled, not a gRPC
-// status: classifyOutcome (chat.go) uses errors.Is/status.Code to treat a
-// cancellation as expected rather than a fault, and status.Errorf's %v would
-// destroy the chain that check relies on. The server here writes one delta,
-// flushes, then blocks with no further frames — the client cancels from
-// inside emit, mimicking a browser disconnecting mid-generation.
+// A hung-up browser must surface as a bare context.Canceled: status.Errorf's
+// %v would break the chain classifyOutcome matches on. The client cancels from
+// inside emit, mimicking a disconnect mid-generation.
 func TestOpenAIResponderCancelMidStream(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -249,10 +241,8 @@ func TestOpenAIResponderCancelMidStream(t *testing.T) {
 	}
 }
 
-// A stream that ends without [DONE] must still report whatever usage it saw
-// before dying — this closes the gap TestOpenAIResponderKeepsUsageOnMidStreamFailure
-// leaves open, since that test reaches its error via json.Unmarshal rather
-// than the missing-sentinel path.
+// The missing-sentinel exit must also keep usage.
+// TestOpenAIResponderKeepsUsageOnMidStreamFailure covers only the decode exit.
 func TestOpenAIResponderMissingDoneSentinelKeepsUsage(t *testing.T) {
 	srv := sseServer(t, http.StatusOK, frameHel, frameFinish, frameUsage)
 	r := newTestLLM(srv.URL)
@@ -278,9 +268,9 @@ type roundTripperFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// bodyTransport answers every request with the given body, read from memory so
-// the body never observes the request context. It is the only way to test a
-// clean end-of-body: a real connection reports a cancelled read instead.
+// bodyTransport serves the body from memory so it never observes the request
+// context — the only way to get a clean end-of-body, since a real connection
+// reports a cancelled read instead.
 func bodyTransport(body string) http.RoundTripper {
 	return roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		return &http.Response{
@@ -292,18 +282,15 @@ func bodyTransport(body string) http.RoundTripper {
 	})
 }
 
-// A hangup that races a clean end-of-body reaches the missing-[DONE] exit with
-// scanner.Err() nil, so that exit needs the same ctx check as the others.
-// Without it a browser disconnect is reported as a provider decode fault.
+// A hangup racing a clean end-of-body reaches the missing-[DONE] exit with
+// scanner.Err() nil, so that exit needs its own ctx check. Without it a browser
+// disconnect is reported as a provider decode fault.
 func TestOpenAIResponderCancelAtEndOfStreamIsNotAProviderError(t *testing.T) {
-	// An httptest server cannot reach this exit reliably: once the context is
-	// cancelled, the real transport usually fails the body read, which the
-	// scanner.Err() branch already handles. Serving the body from memory
-	// guarantees the clean EOF that leaves scanner.Err() nil.
+	// httptest cannot reach this exit: a real transport fails the body read on
+	// cancellation, which the scanner.Err() branch already handles.
 	r := newTestLLM("http://stub.invalid/v1")
-	// Exactly one line, with no trailing blank: any further line — even an empty
-	// separator — would give the loop another turn, and its ctx check would
-	// catch the cancellation before the exit under test.
+	// Exactly one line, no trailing blank: another line would give the loop a
+	// turn, and its ctx check would catch the cancellation first.
 	r.Client = &http.Client{Transport: bodyTransport(frameHel + "\n")}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -324,9 +311,8 @@ func TestOpenAIResponderCancelAtEndOfStreamIsNotAProviderError(t *testing.T) {
 	}
 }
 
-// The SSE grammar makes the space after "data:" optional; a self-hosted
-// gateway in front of an OpenAI-compatible provider may omit it even though
-// Ollama and OpenAI both send it.
+// The space after "data:" is optional per the SSE grammar; a self-hosted
+// gateway may omit it.
 func TestOpenAIResponderToleratesNoSpaceAfterColon(t *testing.T) {
 	srv := sseServer(t, http.StatusOK,
 		`data:{"choices":[{"index":0,"delta":{"content":"Hel"}}]}`,
@@ -375,8 +361,7 @@ func TestOpenAIResponderProviderErrors(t *testing.T) {
 		{
 			name: "provider not running",
 			baseURL: func(t *testing.T) string {
-				// A server closed before the request: the dial fails exactly
-				// as it does when the ollama container is down.
+				// Dials fail exactly as when the ollama container is down.
 				srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 				url := srv.URL
 				srv.Close()
@@ -401,8 +386,7 @@ func TestOpenAIResponderProviderErrors(t *testing.T) {
 			baseURL: func(t *testing.T) string {
 				return sseServer(t, http.StatusUnauthorized).URL
 			},
-			// Internal, not Unauthenticated: the browser's credentials are not
-			// the problem, our LLM_API_KEY is.
+			// Internal, not Unauthenticated: our LLM_API_KEY is at fault.
 			wantCode:   codes.Internal,
 			wantReason: "auth_error",
 			wantInMsg:  "LLM_API_KEY",
@@ -426,10 +410,8 @@ func TestOpenAIResponderProviderErrors(t *testing.T) {
 			wantInMsg:  "500",
 		},
 		{
-			// Unavailable is the canonical retryable code, and a retry
-			// interceptor in frontend/src/api.ts is where CLAUDE.md says retries
-			// belong. A 400 can never succeed on retry, so it must not carry the
-			// code that invites one.
+			// A 400 can never succeed on retry, so it must not carry
+			// Unavailable and invite the frontend's retry layer to loop.
 			name: "other 4xx is not retryable",
 			baseURL: func(t *testing.T) string {
 				return sseServer(t, http.StatusBadRequest).URL
@@ -479,8 +461,8 @@ func TestOpenAIResponderProviderErrors(t *testing.T) {
 	}
 }
 
-// A hosted provider explains itself in the response body. Losing that text
-// turns a one-line fix into a debugging session, so it must reach the status.
+// A provider explains itself in the response body; that text must reach the
+// gRPC status.
 func TestOpenAIResponderSurfacesProviderErrorText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -500,8 +482,8 @@ func TestOpenAIResponderSurfacesProviderErrorText(t *testing.T) {
 	}
 }
 
-// A body that is not OpenAI-shaped still has to come through — Ollama returns
-// plain text, and truncating to nothing would be worse than passing it along.
+// A non-OpenAI-shaped body still has to come through: Ollama returns plain
+// text.
 func TestOpenAIResponderSurfacesNonJSONErrorText(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -550,9 +532,8 @@ func TestOpenAIResponderStopsOnContextCancel(t *testing.T) {
 	}
 }
 
-// histogramCount reads a histogram's sample count directly, for the same
-// reason counterValue exists: the testutil subpackage needs go.sum entries
-// this repo has not resolved.
+// histogramCount reads a sample count directly, for the same reason
+// counterValue exists: testutil needs unresolved go.sum entries.
 func histogramCount(h prometheus.Histogram) uint64 {
 	var m dto.Metric
 	if err := h.Write(&m); err != nil {
