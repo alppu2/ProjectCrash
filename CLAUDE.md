@@ -76,3 +76,13 @@ Changing a proto means regenerating both sides and committing the output.
 - **Metric accounting is centralized per handler.** `chatServer.Chat` records exactly one `chatStreamsTotal` increment and one duration observation in a single deferred func, with `outcome` only ever downgraded; don't add a second Inc/Observe pair on a new exit path.
 - **Client disconnects are not errors.** `classifyOutcome` treats `context.Canceled` and gRPC `codes.Canceled` alike, because a hung-up browser surfaces as either depending on where it is noticed.
 - **Frontend transport is shared.** `frontend/src/api.ts` builds one `createGrpcWebTransport` pointed at Envoy and one promise client per service; auth interceptors, retries, and a env-driven baseUrl belong there, not in components.
+
+## Comments
+
+Comment the non-obvious *why*, in as few words as it takes. A reader who knows Go, React and gRPC does not need the *what*.
+
+- **Three lines is the ceiling.** An inline comment gets one or two; a doc comment on an exported symbol gets up to three. Needing more means the code should be clearer, or the reasoning belongs in `docs/superpowers/specs/`.
+- **Write what is true, not the story of finding it out.** Keep the constraint (`status.Errorf's %v would break the chain classifyOutcome matches on`). Drop the narrative that led to it, the alternatives rejected along the way, and the plan-task numbers.
+- **Say it once.** If a doc comment already states a rule, don't restate it at the call site — cross-reference the symbol instead.
+- **Delete comments that restate the code.** `// Append an empty assistant message` above a line appending an empty assistant message is noise.
+- **Test comments earn their place by naming the regression**, not by re-describing the assertions: what breaks in production if this test goes red.
