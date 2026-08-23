@@ -14,8 +14,11 @@ scrape_configs:
       - host: unix:///var/run/docker.sock
         refresh_interval: 5s
     relabel_configs:
+      # Relabel regexes are fully anchored, so the .* on both sides is load
+      # bearing: order-service has no container_name (see docker-compose.yml),
+      # so compose names its replicas <project>-order-service-<n>.
       - source_labels: [__meta_docker_container_name]
-        regex: /(order-service|inventory-service)
+        regex: /.*(order-service|inventory-service|chat-service).*
         action: keep
       - source_labels: [__meta_docker_container_name]
         regex: /(.*)
