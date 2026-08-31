@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 )
@@ -97,6 +98,13 @@ func TestNewResponder(t *testing.T) {
 			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "http:///v1"},
 			wantErr: true,
 		},
+		{
+			// Booting would log the credential and echo it to the browser in
+			// an unreachable error.
+			name:    "an LLM_BASE_URL embedding credentials fails at startup",
+			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "https://user:hunter2@api.groq.com/openai/v1"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -117,6 +125,18 @@ func TestNewResponder(t *testing.T) {
 			}
 			tt.check(t, r)
 		})
+	}
+}
+
+// The rejection message reaches the startup log, which Promtail ships to Loki:
+// leaking the credential there defeats the check that rejected it.
+func TestValidateBaseURLErrorOmitsCredentials(t *testing.T) {
+	err := validateBaseURL("https://user:hunter2@api.groq.com/openai/v1")
+	if err == nil {
+		t.Fatal("validateBaseURL() error = nil, want an error")
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Errorf("error = %q, want the credential omitted", err)
 	}
 }
 

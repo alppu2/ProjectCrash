@@ -127,6 +127,12 @@ func validateBaseURL(raw string) error {
 	if u.Host == "" {
 		return fmt.Errorf("LLM_BASE_URL %q has no host", raw)
 	}
+	// Userinfo would reach Loki via the base_url startup log and the browser
+	// via an unreachable error. Names the host, never raw, which holds the
+	// password. LLM_API_KEY is the only supported place for a credential.
+	if u.User != nil {
+		return fmt.Errorf("LLM_BASE_URL for host %q must not embed credentials; use LLM_API_KEY", u.Host)
+	}
 	return nil
 }
 
