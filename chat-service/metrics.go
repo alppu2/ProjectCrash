@@ -19,7 +19,9 @@ var (
 	chatStreamDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "chat_stream_duration_seconds",
 		Help:    "Wall time of a chat stream from request to terminal frame.",
-		Buckets: prometheus.DefBuckets,
+		// DefBuckets stop at 10s, which lands every model-backed stream in
+		// +Inf. The low buckets stay for the echo stub, which finishes sooner.
+		Buckets: []float64{.1, .25, .5, 1, 2, 5, 10, 30, 60, 120, 300},
 	})
 
 	chatProviderErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
