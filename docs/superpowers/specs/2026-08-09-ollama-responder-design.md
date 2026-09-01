@@ -231,3 +231,107 @@ System prompts, model parameters in `ChatRequest` (temperature, max tokens),
 Grafana panels for the new metrics, persistence, auth, and the Claude API
 itself. The `Responder` seam and the widened request argument mean each of
 those lands without disturbing this design.
+
+---
+
+## Amendment 2026-08-15: Ollama in compose, OpenAI-compatible endpoint
+
+Two decisions above are reversed before implementation. The design is otherwise
+unchanged: the `Responder` seam, the streaming contract, the metrics, and the
+error taxonomy all stand. Original reasoning is left intact above rather than
+edited, so the reversal is legible.
+
+### Ollama moves into compose
+
+Row 1 chose the Windows host, costing `docker compose up` a working chat. Two
+of its premises were wrong:
+
+- **NVIDIA Container Toolkit is already installed.** `docker info` on this
+  machine reports the runtime registered:
+  `runtimes: {"nvidia": {"path": "nvidia-container-runtime"}}`, GTX 1060 6GB on
+  driver 582.66. Docker Desktop ships GPU passthrough via WSL2; the cost row 1
+  priced was already paid.
+- **`host.docker.internal` is the less realistic topology, not the more.** It
+  is a Docker Desktop special case with no production equivalent. An `ollama`
+  service on the compose network is reached by DNS name over HTTP, which is
+  exactly the shape of a call to a hosted inference API.
+
+Reversing it also deletes the security section's whole problem. Ollama needs no
+`0.0.0.0` bind and no published host port, so no unauthenticated inference API
+is exposed on any interface. That section is now moot; it stands as a record of
+what the host-native route would have cost.
+
+`gpus: all` goes directly in `docker-compose.yml` with no CPU fallback override.
+This is a solo project running on one machine — portability insurance for
+GPU-less clones is speculation.
+
+New costs, accepted: the first `docker compose up` pulls ~2GB inside the
+`ollama` healthcheck window, the image adds ~1.5GB, and Ollama exposes no
+Prometheus endpoint, making it the one service in the stack with no scrape
+target. `chat-service`'s own token and time-to-first-token metrics still cover
+the inference path.
+
+### The endpoint becomes OpenAI-compatible
+
+Row 3 chose Ollama's native `/api/chat`, reasoning that "Anthropic's Messages
+API is not OpenAI-compatible, and Claude is the named endgame." The endgame
+changed: Ollama is a local test provider, and the deployed backend will be a
+hosted open-model API. Groq, OpenRouter, Together, DeepInfra and self-hosted
+vLLM are all OpenAI-compatible, and so is Ollama's `/v1` surface.
+
+Targeting `POST {LLM_BASE_URL}/chat/completions` therefore makes the cloud
+migration configuration rather than code:
+
+```
+local:  LLM_BASE_URL=http://ollama:11434/v1          LLM_API_KEY=
+cloud:  LLM_BASE_URL=https://api.groq.com/openai/v1  LLM_API_KEY=gsk_...
+```
+
+The `Authorization: Bearer` header is set only when `LLM_API_KEY` is non-empty,
+so the same code path serves an unauthenticated local Ollama.
+
+Consequent renames: `ollama.go` → `openai.go`, `OllamaResponder` →
+`OpenAIResponder`, `OLLAMA_URL`/`OLLAMA_MODEL` → `LLM_BASE_URL`/`LLM_MODEL`,
+and `RESPONDER=ollama` → `RESPONDER=llm`. Ollama is now just a base URL, which
+under this framing is all it ever was.
+
+**Wire format.** Server-sent events rather than NDJSON: `data: `-prefixed JSON
+lines terminated by a `data: [DONE]` sentinel, so the loop is a `bufio.Scanner`
+with prefix handling instead of a bare `json.Decoder`. Deltas live at
+`choices[0].delta.content`. `finish_reason` arrives on a frame whose `delta` is
+empty, and token counts arrive in a trailing usage-only frame with an empty
+`choices` array, requested via `"stream_options": {"include_usage": true}`.
+
+**This supersedes "Usage on the error path" above.** Because `finish_reason` and
+`usage` arrive in separate frames that are accumulated as they land, a
+mid-stream failure returns whatever had already been reported instead of an
+empty `Usage`. That is what the `Usage` doc comment asks for, so the caveat
+warning implementers not to imitate the empty-usage shape is no longer needed.
+
+**Two additions to the error table**, both reachable only against a real
+hosted provider but cheap to write now: HTTP 401 → `reason="auth_error"` at
+`codes.Internal`, because a bad key is our misconfiguration and not the
+browser's, and HTTP 429 → `reason="rate_limited"` at `codes.Unavailable`, which
+Groq's free tier will produce.
+
+**The likely deployed target is OpenAI's `gpt-4o-mini`**, not decided as of this
+writing. That does not change anything above — OpenAI's API is the format this
+design targets, and `stream_options.include_usage` is OpenAI's own field, so the
+assumption flagged below is guaranteed there even if Ollama's compat layer
+ignores it locally.
+
+It does add a deployment precondition, recorded here so the reversal to a
+metered provider is not made casually. `Chat` is unauthenticated, which is why
+`validateHistory` bounds request size at all. Against a paid provider that makes
+the endpoint a way for anyone to spend the API key. A public deployment
+therefore needs a provider-side spend cap, a `max_tokens` ceiling per request
+(which requires the model-parameters work this design lists as out of scope),
+and per-client rate limiting at Envoy or above. None of that is needed while the
+provider is a local Ollama, and none of it is in this design.
+
+**One unverified assumption.** Ollama's compat layer is expected to honour
+`stream_options.include_usage`, but that has not been confirmed on 0.32.6 the
+way the native field names were. Implementation verifies the real frames with
+`curl` before the `Usage` mapping is written; if the usage frame never arrives,
+`chat_tokens_total` stays at zero locally and begins reporting in the cloud,
+which is an acceptable local gap and not a redesign.

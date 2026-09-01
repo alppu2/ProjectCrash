@@ -8,29 +8,25 @@ import (
 	chatpb "chat-service/chat"
 )
 
-// Usage reports what a Responder consumed and produced for one turn.
-// The echo stub leaves InputTokens at zero; a model-backed Responder fills
-// all three fields from the provider's usage report.
+// Usage reports what a Responder consumed and produced for one turn. The echo
+// stub leaves InputTokens at zero.
 //
-// A Responder returning a non-nil error may still populate Usage with
-// partial values — e.g. a provider that fails mid-stream after emitting 400
-// output tokens still billed for them. Callers must not discard Usage just
-// because err is non-nil.
+// Usage may be partially populated even when Stream returns an error: a
+// provider that fails mid-stream still billed for what it emitted. Callers
+// must not discard it on error.
 type Usage struct {
 	StopReason   string
 	InputTokens  int32
 	OutputTokens int32
 }
 
-// Responder produces an assistant reply for a conversation, emitting it in
-// pieces as they become available. emit is called once per piece; if emit
-// returns an error, Stream stops and returns that error unchanged.
+// Responder produces an assistant reply, emitting it in pieces. emit is called
+// once per piece; if it returns an error, Stream stops and returns it
+// unchanged.
 //
-// This is the seam for roadmap step 3: a Claude-backed implementation drops
-// in here without the RPC handler changing. Taking the full request (rather
-// than a bare history slice) means future ChatRequest fields — model,
-// temperature, max_tokens, system prompt, RAG top-k — reach an implementation
-// without another interface change and another update to every call site.
+// This is the seam for a new provider — the RPC handler does not change. It
+// takes the full request rather than a history slice so future ChatRequest
+// fields (model, temperature, system prompt) need no interface change.
 type Responder interface {
 	Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error)
 }
@@ -52,8 +48,8 @@ func (e *EchoResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emi
 		case <-time.After(e.Delay):
 		}
 
-		// Re-join with single spaces: the client concatenates deltas verbatim,
-		// so the separator has to travel with the word.
+		// The client concatenates deltas verbatim, so the separator has to
+		// travel with the word.
 		delta := word
 		if i > 0 {
 			delta = " " + word

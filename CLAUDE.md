@@ -38,9 +38,13 @@ Frontend (`cd frontend`):
 ```bash
 npm run dev        # Vite, opens browser
 npm run build      # tsc -b && vite build
+npm test           # vitest run (jsdom); npm run test:watch to iterate
 npm run lint
 npm run format     # prettier --write src/
 ```
+
+`npm run format:check` fails on files this repo has never formatted — check
+whether a warning predates your change before reformatting anything.
 
 Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin), Prometheus `:9090`, RabbitMQ management `:15672`, Tempo `:3200`, Loki `:3100`, MongoDB `:27017`, inventory-service metrics `:9092`.
 
@@ -67,8 +71,19 @@ Changing a proto means regenerating both sides and committing the output.
 
 - **Observability is per-service and duplicated on purpose.** There is no shared Go module, so `telemetry.go` (OTLP → Tempo), `metrics.go` (promauto collectors), and `log_trace.go` (`logWithTrace` injecting `trace_id`/`span_id` into slog) are copied into each service. Fixes to one usually belong in all of them.
 - **Every service serves Prometheus metrics on `:9091`** from a goroutine started before anything else in `main`, and logs JSON via `slog.NewJSONHandler` to stdout (Promtail ships it to Loki).
+- **Both `docker_sd_configs` regexes must survive a compose-generated name.** `prometheus.yml` and `promtail-config.yml` discover containers the same way, and relabel regexes are *fully anchored* — a bare `/(order-service)` never matches `/<project>-order-service-1`, which is what `order-service` is called because it has no `container_name`. Match with `.*` on both sides, and add the service to both files. Getting this wrong drops that service's logs or metrics silently: nothing errors, the target just never appears.
 - **Trace context crosses gRPC via `otelgrpc` stats handlers, and crosses RabbitMQ via `amqpHeaderCarrier`** (`amqp_carrier.go`) — inject into `amqp.Table` headers on publish, extract on consume. A new async hop must do both or the trace breaks.
 - **Degrade, don't die.** Tracer init failure logs a warning and continues untraced; a RabbitMQ publish failure still returns success because the packet is already durable in MongoDB. `order-service.ensureChannel` reconnects lazily — it tries a new channel on the existing connection before a full redial, and callers must use the returned channel rather than re-reading `s.amqpChannel`.
 - **Metric accounting is centralized per handler.** `chatServer.Chat` records exactly one `chatStreamsTotal` increment and one duration observation in a single deferred func, with `outcome` only ever downgraded; don't add a second Inc/Observe pair on a new exit path.
 - **Client disconnects are not errors.** `classifyOutcome` treats `context.Canceled` and gRPC `codes.Canceled` alike, because a hung-up browser surfaces as either depending on where it is noticed.
 - **Frontend transport is shared.** `frontend/src/api.ts` builds one `createGrpcWebTransport` pointed at Envoy and one promise client per service; auth interceptors, retries, and a env-driven baseUrl belong there, not in components.
+
+## Comments
+
+Comment the non-obvious *why*, in as few words as it takes. A reader who knows Go, React and gRPC does not need the *what*.
+
+- **Three lines is the ceiling.** An inline comment gets one or two; a doc comment on an exported symbol gets up to three. Needing more means the code should be clearer, or the reasoning belongs in `docs/superpowers/specs/`.
+- **Write what is true, not the story of finding it out.** Keep the constraint (`status.Errorf's %v would break the chain classifyOutcome matches on`). Drop the narrative that led to it, the alternatives rejected along the way, and the plan-task numbers.
+- **Say it once.** If a doc comment already states a rule, don't restate it at the call site — cross-reference the symbol instead.
+- **Delete comments that restate the code.** `// Append an empty assistant message` above a line appending an empty assistant message is noise.
+- **Test comments earn their place by naming the regression**, not by re-describing the assertions: what breaks in production if this test goes red.

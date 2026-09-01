@@ -43,6 +43,63 @@ services:
       - chat-service/.env
     networks:
       - micro-network
+    depends_on:
+      ollama:
+        condition: service_healthy
+        # required: false keeps the tracked default (RESPONDER=echo) bootable on
+        # a host with no GPU and no pulled model: without the llm profile the
+        # ollama service is not started, and chat-service must not wait for a
+        # container that will never come up. With --profile llm it waits for
+        # healthy, so the first message gets a reply instead of a 404.
+        required: false
+
+  ollama:
+    image: ollama/ollama:0.32.6
+    container_name: ollama
+    # Opt-in: `docker compose --profile llm up`. Plain `docker compose up` runs
+    # the echo responder, which needs no model, no 2GB pull and no NVIDIA
+    # runtime — the onboarding path in the README stays a one-liner.
+    profiles:
+      - llm
+    # No published host port: chat-service reaches this over micro-network, and
+    # keeping it off the host avoids exposing an unauthenticated inference API.
+    # Use `docker compose exec ollama ...` for debugging.
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      # Keep the model resident between turns; a cold VRAM load costs ~33s.
+      OLLAMA_KEEP_ALIVE: 30m
+    # Pull on every start so a fresh volume self-provisions. The pull is a no-op
+    # once the model is in the volume. NOTE: this model name is duplicated in
+    # chat-service/.env as LLM_MODEL — change both together, or requests fail
+    # with reason="model_missing".
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ollama serve &
+        pid=$$!
+        # PID 1 is this shell, so without a trap SIGTERM never reaches the
+        # server: every `docker compose down` would burn the full 10s grace
+        # period and then SIGKILL, aborting an in-flight pull mid-download.
+        trap 'kill -TERM $$pid' TERM INT
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        # Exit loudly on a failed pull. Staying up would leave the container
+        # running but never healthy, so `up` would block for start_period plus
+        # 60 retries — ~20 minutes — with the cause buried in the logs.
+        ollama pull llama3.2:3b || exit 1
+        wait $$pid
+    # Healthy only once the model is actually pulled, not merely when the API
+    # answers — otherwise chat-service starts and 404s on its first turn.
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q llama3.2:3b"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 600s
+    gpus: all
+    networks:
+      - micro-network
 
   mongodb:
     image: mongo:latest
@@ -155,3 +212,4 @@ networks:
 
 volumes:
   mongo-data:
+  ollama-models:

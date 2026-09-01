@@ -17,9 +17,8 @@ import (
 	chatpb "chat-service/chat"
 )
 
-// counterValue reads the current value of a prometheus counter without
-// pulling in the testutil subpackage, which needs go.sum entries this repo
-// hasn't resolved (kylelemons/godebug).
+// counterValue reads a prometheus counter without the testutil subpackage,
+// which needs go.sum entries this repo hasn't resolved (kylelemons/godebug).
 func counterValue(c prometheus.Counter) float64 {
 	var m dto.Metric
 	if err := c.Write(&m); err != nil {
@@ -28,9 +27,8 @@ func counterValue(c prometheus.Counter) float64 {
 	return m.GetCounter().GetValue()
 }
 
-// fakeStream satisfies grpc.ServerStreamingServer[chatpb.ChatChunk] by
-// collecting sends in memory. The embedded nil interface supplies the methods
-// the handler never calls; touching one would panic, which is the intent.
+// fakeStream collects sends in memory. The embedded nil interface supplies the
+// methods the handler never calls; touching one panics, which is the intent.
 type fakeStream struct {
 	grpc.ServerStream
 	ctx     context.Context
@@ -77,10 +75,8 @@ func newTestServer() *chatServer {
 	return &chatServer{responder: &EchoResponder{}}
 }
 
-// erroringResponder always returns a fixed error, ignoring ctx entirely. It
-// lets tests produce a genuine responder failure independent of whether the
-// stream's context happens to be cancelled — EchoResponder can't do that,
-// since its only error path is ctx cancellation.
+// erroringResponder returns a fixed error, ignoring ctx. EchoResponder cannot
+// produce a failure independent of cancellation — that is its only error path.
 type erroringResponder struct {
 	err error
 }
@@ -161,8 +157,7 @@ func TestChatRejectsInvalidHistory(t *testing.T) {
 	}
 }
 
-// repeatMessages builds n user messages, each with the given content, used to
-// probe the maxHistoryMessages and maxHistoryBytes bounds in validateHistory.
+// repeatMessages probes the maxHistoryMessages and maxHistoryBytes bounds.
 func repeatMessages(n int, content string) []*chatpb.Message {
 	msgs := make([]*chatpb.Message, n)
 	for i := range msgs {
@@ -195,6 +190,23 @@ func TestValidateHistoryBounds(t *testing.T) {
 		{
 			name:    "content bytes just under limit is accepted",
 			msgs:    []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: strings.Repeat("a", maxHistoryBytes)}},
+			wantErr: false,
+		},
+		{
+			name: "mid-history message with unset role is rejected",
+			msgs: []*chatpb.Message{
+				{Role: chatpb.Role_ROLE_UNSPECIFIED, Content: "who am I"},
+				{Role: chatpb.Role_ROLE_USER, Content: "hi"},
+			},
+			wantErr: true,
+		},
+		{
+			name: "user and assistant roles are accepted",
+			msgs: []*chatpb.Message{
+				{Role: chatpb.Role_ROLE_USER, Content: "hi"},
+				{Role: chatpb.Role_ROLE_ASSISTANT, Content: "hello"},
+				{Role: chatpb.Role_ROLE_USER, Content: "again"},
+			},
 			wantErr: false,
 		},
 	}
@@ -244,10 +256,9 @@ func TestChatDoesNotMisclassifyErrorAsCancelled(t *testing.T) {
 	sentinel := errors.New("model overloaded")
 	srv := &chatServer{responder: &erroringResponder{err: sentinel}}
 
-	// Cancel the context before Stream even runs, so the responder's error
-	// and the client's cancellation land at the same moment. classifyOutcome
-	// must trust the error, not ctx, or a real fault gets hidden as a
-	// routine disconnect.
+	// Cancelled before Stream runs, so the fault and the disconnect land
+	// together. classifyOutcome must trust the error, not ctx, or a real fault
+	// hides as a routine disconnect.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	stream := newFakeStream(ctx)
@@ -281,5 +292,55 @@ func TestChatPropagatesSendError(t *testing.T) {
 
 	if err := srv.Chat(req, stream); err == nil {
 		t.Fatal("Chat() error = nil, want the transport error")
+	}
+}
+
+// usageResponder returns a fixed Usage and error without streaming, to drive
+// the handler's accounting directly. erroringResponder always reports zero.
+type usageResponder struct {
+	usage Usage
+	err   error
+}
+
+func (r *usageResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
+	return r.usage, r.err
+}
+
+func TestChatRecordsTokenCounts(t *testing.T) {
+	beforeIn := counterValue(chatTokensTotal.WithLabelValues("input"))
+	beforeOut := counterValue(chatTokensTotal.WithLabelValues("output"))
+
+	srv := &chatServer{responder: &usageResponder{usage: Usage{
+		StopReason:   "stop",
+		InputTokens:  26,
+		OutputTokens: 298,
+	}}}
+	if err := srv.Chat(&chatpb.ChatRequest{Messages: userHistory("hi")}, newFakeStream(context.Background())); err != nil {
+		t.Fatalf("Chat() error = %v, want nil", err)
+	}
+
+	if got := counterValue(chatTokensTotal.WithLabelValues("input")); got != beforeIn+26 {
+		t.Errorf("chat_tokens_total{direction=\"input\"} = %v, want %v", got, beforeIn+26)
+	}
+	if got := counterValue(chatTokensTotal.WithLabelValues("output")); got != beforeOut+298 {
+		t.Errorf("chat_tokens_total{direction=\"output\"} = %v, want %v", got, beforeOut+298)
+	}
+}
+
+func TestChatRecordsPartialTokenCountsOnError(t *testing.T) {
+	beforeOut := counterValue(chatTokensTotal.WithLabelValues("output"))
+
+	// Those tokens were consumed, so the counter must move despite the error.
+	srv := &chatServer{responder: &usageResponder{
+		usage: Usage{OutputTokens: 400},
+		err:   errors.New("provider exploded"),
+	}}
+	err := srv.Chat(&chatpb.ChatRequest{Messages: userHistory("hi")}, newFakeStream(context.Background()))
+	if err == nil {
+		t.Fatal("Chat() error = nil, want the responder error")
+	}
+
+	if got := counterValue(chatTokensTotal.WithLabelValues("output")); got != beforeOut+400 {
+		t.Errorf("chat_tokens_total{direction=\"output\"} = %v, want %v", got, beforeOut+400)
 	}
 }

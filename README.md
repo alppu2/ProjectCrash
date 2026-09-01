@@ -10,7 +10,8 @@ Deploy target: a public domain (not yet registered — see [Status](#status)).
 |---|---|
 | `frontend` | React 19 + TypeScript + Vite. Talks gRPC-Web, renders streamed chat deltas token by token, supports mid-stream cancel. |
 | `envoy` | Single public entry point. gRPC-Web ↔ gRPC translation, CORS, path-prefix routing, round-robin load balancing over service replicas. |
-| `chat-service` | Go. Server-streaming `Chat` RPC emitting `ChatChunk` frames. Stateless — the client carries conversation history — so any replica can serve any turn. |
+| `chat-service` | Go. Server-streaming `Chat` RPC emitting `ChatChunk` frames. Stateless — the client carries conversation history — so any replica can serve any turn. Replies come from an echo stub or a real model, selected by `RESPONDER`. |
+| `ollama` | Local development only. Runs `llama3.2:3b` behind an OpenAI-compatible API, so the chat answers with a real model at zero API cost. Opt-in via the `llm` compose profile; deployment points the same responder at a hosted endpoint instead. |
 | `order-service` | Go. gRPC ingest: persists to MongoDB, publishes to RabbitMQ. The horizontally scaled service. |
 | `inventory-service` | Go. RabbitMQ consumer, with trace context carried across the queue boundary. |
 | `prometheus` / `grafana` / `loki` / `tempo` / `promtail` | Metrics, dashboards, log aggregation, distributed tracing. Every service ships all three signals. |
@@ -29,7 +30,7 @@ Things this stack demonstrates deliberately, rather than by accident:
 
 ## Running it locally
 
-Requires Docker and Docker Compose.
+Requires Docker and Docker Compose. The optional `llm` profile additionally requires an NVIDIA GPU and the NVIDIA Container Toolkit.
 
 ```bash
 # One-time: each service reads its own env file
@@ -45,6 +46,16 @@ cd frontend && npm install && npm run dev
 
 Then: Grafana at `localhost:3000` (dashboards are provisioned, anonymous access on), Prometheus at `:9090`, RabbitMQ management at `:15672`, Tempo at `:3200`.
 
+The chat replies with the echo stub out of the box, which needs no model and no GPU. For real model replies, set `RESPONDER=llm` in `chat-service/.env` and bring the stack up with the `llm` profile:
+
+```bash
+docker compose --profile llm up --build
+```
+
+That adds an `ollama` container which pulls `llama3.2:3b` (~2GB) on first start and serves it over the compose network — nothing is published to the host, so the unauthenticated inference API is not reachable from outside Docker. It claims the GPU via `gpus: all`, which needs an NVIDIA GPU and the NVIDIA Container Toolkit; without them the profile fails to start. Removing that line from `docker-compose.yml` falls back to CPU inference, which works for a 3B model but answers in tens of seconds rather than a second or two.
+
+Ollama is a local development dependency, not a deployed one. Deployment drops the `llm` profile and points the same responder at a hosted OpenAI-compatible endpoint: keep `RESPONDER=llm`, set `LLM_BASE_URL` and `LLM_API_KEY`, change no code and no compose. Any `docker compose up` without `--profile llm` skips the container outright, and `chat-service` does not wait on it.
+
 To watch load balancing under scale:
 
 ```bash
@@ -53,9 +64,9 @@ docker compose up --build --scale order-service=3
 
 ## Status
 
-Working today: the full service mesh, observability stack, horizontal scaling, and end-to-end streaming chat transport. The chat responder is currently an echo stub — it proves the streaming path at zero API cost, and swaps for a Claude-backed responder behind a single Go interface (`chat-service/responder.go`).
+Working today: the full service mesh, observability stack, horizontal scaling, end-to-end streaming chat, and real model replies from a local Ollama over an OpenAI-compatible API. The responder is a single Go interface (`chat-service/responder.go`) with two implementations — an echo stub for zero-cost load tests, and `OpenAIResponder` for any compatible provider — selected by `RESPONDER` at startup. Provider failures are classified and counted (`chat_provider_errors_total`), alongside token counts and time-to-first-token.
 
-Next: the Claude-backed responder with a personal-background system prompt, retrieval over my project and work history, TLS and a public domain, and Kubernetes with autoscaling driven by queue depth.
+Next: a personal-background system prompt, retrieval over my project and work history, a hosted provider (which needs a spend cap, a `max_tokens` ceiling and rate limiting first — the `Chat` RPC is unauthenticated by design), TLS and a public domain, and Kubernetes with autoscaling driven by queue depth.
 
 ## Contact
 
