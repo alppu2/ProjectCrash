@@ -6,3 +6,8 @@ dist/
 .claude/
 docs/scalability-learning-plan.md
 **/*.exe
+
+# Personal corpus mounted into chat-service. Deny-by-default: the directory is
+# where personal material gets dropped, and this repo is public.
+chat-service/corpus/*
+!chat-service/corpus/stub.md

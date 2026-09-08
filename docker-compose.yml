@@ -41,6 +41,11 @@ services:
     container_name: chat-service
     env_file:
       - chat-service/.env
+    volumes:
+      # The directory is mounted, not background.md itself: Docker would create
+      # a directory in place of a missing host file. background.md is absent on a
+      # fresh clone, so loadCorpus falls back to the embedded stub.
+      - ./chat-service/corpus:/etc/chat-service/corpus:ro
     networks:
       - micro-network
     depends_on:
@@ -69,6 +74,9 @@ services:
     environment:
       # Keep the model resident between turns; a cold VRAM load costs ~33s.
       OLLAMA_KEEP_ALIVE: 30m
+      # The default 4096 truncates silently, and the envelope is what falls out
+      # first. Fits maxHistoryBytes + maxCorpusBytes with room for the reply.
+      OLLAMA_CONTEXT_LENGTH: 16384
     # Pull on every start so a fresh volume self-provisions. The pull is a no-op
     # once the model is in the volume. NOTE: this model name is duplicated in
     # chat-service/.env as LLM_MODEL — change both together, or requests fail
