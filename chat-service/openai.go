@@ -29,6 +29,7 @@ type OpenAIResponder struct {
 	BaseURL string       // no trailing slash
 	Model   string       // e.g. llama3.2:3b
 	APIKey  string       // empty for a local Ollama; sent as a Bearer token when set
+	System  string       // grounding prompt; empty sends none
 	Client  *http.Client // injected so tests can point at an httptest server
 }
 
@@ -116,7 +117,7 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		Model:         o.Model,
 		Stream:        true,
 		StreamOptions: openAIStreamOptions{IncludeUsage: true},
-		Messages:      toOpenAIMessages(req.GetMessages()),
+		Messages:      o.messages(req.GetMessages()),
 	})
 	if err != nil {
 		return usage, providerError("config_error", codes.Internal, "encoding completions request: %v", err)
@@ -240,6 +241,16 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 	}
 	return usage, providerError("decode_error", codes.Internal,
 		"completions stream ended without a [DONE] sentinel")
+}
+
+// messages prepends the system prompt to the mapped history. It has to lead
+// the array: a provider that sees it after the history reads it as
+// conversation, not instruction.
+func (o *OpenAIResponder) messages(msgs []*chatpb.Message) []openAIMessage {
+	if o.System == "" {
+		return toOpenAIMessages(msgs)
+	}
+	return append([]openAIMessage{{Role: "system", Content: o.System}}, toOpenAIMessages(msgs)...)
 }
 
 // toOpenAIMessages maps proto roles to the wire format's role strings.

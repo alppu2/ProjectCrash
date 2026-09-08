@@ -96,14 +96,26 @@ func newResponder() (Responder, error) {
 		}
 		model := envOr("LLM_MODEL", defaultLLMModel)
 		apiKey := os.Getenv("LLM_API_KEY")
+
+		corpusPath := envOr("CORPUS_PATH", defaultCorpusPath)
+		corpus, isStub, err := loadCorpus(corpusPath)
+		if err != nil {
+			return nil, err
+		}
+		if isStub {
+			slog.Warn("no corpus mounted, answering from the committed stub", "path", corpusPath)
+		}
 		// Logs whether a key is set, never the key. Worth knowing on a 401.
+		// corpus_bytes is the context budget the history has to share.
 		slog.Info("responder configured", "responder", "llm",
-			"base_url", baseURL, "model", model, "api_key_set", apiKey != "")
+			"base_url", baseURL, "model", model, "api_key_set", apiKey != "",
+			"corpus_bytes", len(corpus))
 		return &OpenAIResponder{
 			// The request path is appended directly.
 			BaseURL: strings.TrimSuffix(baseURL, "/"),
 			Model:   model,
 			APIKey:  apiKey,
+			System:  systemPrompt(corpus),
 			Client:  newLLMClient(),
 		}, nil
 

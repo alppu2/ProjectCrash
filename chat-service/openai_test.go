@@ -572,3 +572,47 @@ func TestOpenAIResponderSkipsTimeToFirstTokenWhenNoDeltas(t *testing.T) {
 		t.Errorf("TTFT sample count = %d, want %d — an empty reply has no first token", got, before)
 	}
 }
+
+// The system message is what makes this a portfolio assistant rather than a
+// general chatbot. It must lead the array: a provider that sees it after the
+// history treats it as conversation, not instruction.
+func TestOpenAIResponderPrependsSystemMessage(t *testing.T) {
+	type capturedMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	var body struct {
+		Messages []capturedMessage `json:"messages"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, frameDone+"\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	const system = "Answer only from the material below."
+	r := newTestLLM(srv.URL)
+	r.System = system
+
+	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{
+		{Role: chatpb.Role_ROLE_USER, Content: "first"},
+		{Role: chatpb.Role_ROLE_ASSISTANT, Content: "reply"},
+		{Role: chatpb.Role_ROLE_USER, Content: "second"},
+	}}
+	if _, err := r.Stream(context.Background(), req, func(string) error { return nil }); err != nil {
+		t.Fatalf("Stream() error = %v, want nil", err)
+	}
+
+	want := []capturedMessage{
+		{Role: "system", Content: system},
+		{Role: "user", Content: "first"},
+		{Role: "assistant", Content: "reply"},
+		{Role: "user", Content: "second"},
+	}
+	if !slices.Equal(body.Messages, want) {
+		t.Errorf("messages = %+v, want %+v", body.Messages, want)
+	}
+}

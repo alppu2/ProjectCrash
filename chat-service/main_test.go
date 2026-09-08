@@ -2,6 +2,8 @@ package main
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -109,6 +111,9 @@ func TestNewResponder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// The default CORPUS_PATH is the container mount, which no dev box
+			// has. A real directory with no file exercises the stub fallback.
+			t.Setenv("CORPUS_PATH", filepath.Join(t.TempDir(), "background.md"))
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
@@ -155,5 +160,39 @@ func TestNewLLMClientTimeout(t *testing.T) {
 	}
 	if client.Timeout != 0 {
 		t.Errorf("client.Timeout = %v, want 0 — a whole-request timeout would kill long generations", client.Timeout)
+	}
+}
+
+// The whole feature is the corpus reaching the model. Dropped here, the
+// assistant answers as a generic chatbot and nothing errors.
+func TestNewResponderLoadsCorpusIntoSystemPrompt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "corpus.md")
+	const corpus = "Aleksi shipped an Envoy-fronted Go stack."
+	if err := os.WriteFile(path, []byte(corpus), 0o600); err != nil {
+		t.Fatalf("writing fixture: %v", err)
+	}
+	t.Setenv("RESPONDER", "llm")
+	t.Setenv("CORPUS_PATH", path)
+
+	r, err := newResponder()
+	if err != nil {
+		t.Fatalf("newResponder() error = %v, want nil", err)
+	}
+	o, ok := r.(*OpenAIResponder)
+	if !ok {
+		t.Fatalf("responder = %T, want *OpenAIResponder", r)
+	}
+	if !strings.Contains(o.System, corpus) {
+		t.Errorf("System = %q, want it to contain the corpus", o.System)
+	}
+}
+
+// A mount that resolved to something unreadable must not boot: the stub would
+// answer as though it were his background.
+func TestNewResponderFailsOnBrokenCorpusMount(t *testing.T) {
+	t.Setenv("RESPONDER", "llm")
+	t.Setenv("CORPUS_PATH", t.TempDir()) // a directory, not a file
+	if _, err := newResponder(); err == nil {
+		t.Error("newResponder() error = nil, want an error for an unreadable corpus")
 	}
 }
