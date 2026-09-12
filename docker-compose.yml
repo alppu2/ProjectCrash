@@ -57,6 +57,11 @@ services:
         # container that will never come up. With --profile llm it waits for
         # healthy, so the first message gets a reply instead of a 404.
         required: false
+      qdrant:
+        condition: service_healthy
+        # Same reasoning as ollama: without the llm profile qdrant never
+        # starts, and the echo default must not wait for it.
+        required: false
 
   ollama:
     image: ollama/ollama:0.32.6
@@ -96,11 +101,14 @@ services:
         # running but never healthy, so `up` would block for start_period plus
         # 60 retries — ~20 minutes — with the cause buried in the logs.
         ollama pull llama3.2:3b || exit 1
+        # NOTE: duplicated in chat-service/.env as EMBED_MODEL. Change both
+        # together, or ingest fails against a model the server does not serve.
+        ollama pull nomic-embed-text || exit 1
         wait $$pid
-    # Healthy only once the model is actually pulled, not merely when the API
+    # Healthy only once both models are actually pulled, not merely when the API
     # answers — otherwise chat-service starts and 404s on its first turn.
     healthcheck:
-      test: ["CMD-SHELL", "ollama list | grep -q llama3.2:3b"]
+      test: ["CMD-SHELL", "ollama list | grep -q llama3.2:3b && ollama list | grep -q nomic-embed-text"]
       interval: 10s
       timeout: 5s
       retries: 60
@@ -108,6 +116,33 @@ services:
     gpus: all
     networks:
       - micro-network
+
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: qdrant
+    # Same profile as ollama: retrieval is implied by RESPONDER=llm, and the
+    # tracked default (echo) must still boot with neither container.
+    profiles:
+      - llm
+    # No published host port, for the same reason as ollama: the REST API is
+    # unauthenticated. Use `docker compose exec qdrant ...` to debug.
+    volumes:
+      - qdrant-storage:/qdrant/storage
+    networks:
+      - micro-network
+    healthcheck:
+      # /readyz is the readiness endpoint; / answers before storage is loaded.
+      # Spoken over bash's /dev/tcp because the image ships neither curl nor
+      # wget, and a healthcheck that cannot run never turns healthy.
+      test:
+        - CMD
+        - bash
+        - -c
+        - 'exec 3<>/dev/tcp/127.0.0.1/6333 && printf "GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && head -1 <&3 | grep -q "200 OK"'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   mongodb:
     image: mongo:latest
@@ -221,3 +256,4 @@ networks:
 volumes:
   mongo-data:
   ollama-models:
+  qdrant-storage:
