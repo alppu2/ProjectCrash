@@ -53,6 +53,32 @@ func TestChunkMarkdownOverlaps(t *testing.T) {
 	}
 }
 
+// The docs are full of fenced YAML and shell, whose comments start with '#'.
+// Read as headings they split a code block mid-fence and label the chunk with
+// a line of configuration.
+func TestChunkMarkdownIgnoresHeadingsInsideCodeFences(t *testing.T) {
+	src := "## Compose\n\n```yaml\nhealthcheck:\n  # /readyz answers before storage is loaded.\n  test: [\"CMD\"]\n```\n\nAfter the fence.\n"
+
+	for _, c := range ChunkMarkdown(src) {
+		if c.Heading != "Compose" {
+			t.Errorf("heading = %q, want Compose — a '#' inside a fence is a comment", c.Heading)
+		}
+	}
+}
+
+// "#hashtag" is not a heading in CommonMark, and treating it as one loses the
+// line into a label.
+func TestChunkMarkdownRequiresSpaceAfterHashes(t *testing.T) {
+	for _, c := range ChunkMarkdown("## Real\n\n#notaheading is body text.\n") {
+		if c.Heading != "Real" {
+			t.Errorf("heading = %q, want Real", c.Heading)
+		}
+		if !strings.Contains(c.Text, "#notaheading") {
+			t.Errorf("chunk = %q, want the '#notaheading' line kept as body", c.Text)
+		}
+	}
+}
+
 // Chunks carry a line number so a citation points at the right place in the
 // file. An always-zero line makes every source citation say :1.
 func TestChunkMarkdownRecordsLine(t *testing.T) {

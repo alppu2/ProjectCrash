@@ -11,7 +11,7 @@ import (
 // ChunkerVersion is hashed with the file bytes. Editing this file leaves file
 // bytes identical, so a hash over bytes alone would skip everything and leave
 // the index built by the previous chunker.
-const ChunkerVersion = "1"
+const ChunkerVersion = "2"
 
 // Rough token budget per chunk and the overlap between neighbours. Tokens are
 // approximated as words: precise counting would need the model's tokeniser for
@@ -68,8 +68,14 @@ func splitSections(src string) []section {
 		body.Reset()
 	}
 
+	var inFence bool
 	for i, line := range lines {
-		if h, ok := headingText(line); ok {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+		}
+		// The docs are full of fenced YAML and shell, whose comments start
+		// with '#'; read as headings they split a block mid-fence.
+		if h, ok := headingText(line); ok && !inFence {
 			flush()
 			// The heading's own line, so a citation points at the section.
 			cur = section{heading: h, line: i + 1}
@@ -88,7 +94,13 @@ func headingText(line string) (string, bool) {
 	if !strings.HasPrefix(trimmed, "#") {
 		return "", false
 	}
-	return strings.TrimSpace(strings.TrimLeft(trimmed, "#")), true
+	// CommonMark wants a space after the hashes, which is what separates a
+	// heading from "#notaheading".
+	rest := strings.TrimLeft(trimmed, "#")
+	if rest == "" || !strings.HasPrefix(rest, " ") {
+		return "", false
+	}
+	return strings.TrimSpace(rest), true
 }
 
 type part struct {
