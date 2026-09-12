@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -265,4 +266,74 @@ func toOpenAIMessages(msgs []*chatpb.Message) []openAIMessage {
 		out = append(out, openAIMessage{Role: role, Content: m.GetContent()})
 	}
 	return out
+}
+
+// withSystem returns a copy bound to one turn's grounding prompt. System is a
+// construction-time field but retrieval produces a new prompt every turn; the
+// *http.Client is shared, so this is a five-field copy.
+func (o *OpenAIResponder) withSystem(system string) Responder {
+	clone := *o
+	clone.System = system
+	return &clone
+}
+
+// condensePrompt folds a follow-up into a standalone question. The model is
+// told to echo the question back verbatim when it already stands alone, so a
+// first-person question does not drift into a third-person paraphrase.
+const condensePrompt = `Rewrite the user's final message as a standalone question that can be understood with no conversation history. Resolve pronouns and references using the conversation. Output only the question, with no preamble. If the final message already stands alone, output it unchanged.`
+
+// condenseMaxTokens bounds the rewrite. A standalone question is one sentence;
+// anything longer is the model answering instead of rewriting.
+const condenseMaxTokens = 96
+
+// condense runs a non-streaming completion against the same model. It lands
+// ahead of the first token, so its latency is measured separately.
+func (o *OpenAIResponder) condense(ctx context.Context, msgs []*chatpb.Message) (string, error) {
+	payload := append([]openAIMessage{{Role: "system", Content: condensePrompt}}, toOpenAIMessages(msgs)...)
+	body, err := json.Marshal(struct {
+		Model     string          `json:"model"`
+		Stream    bool            `json:"stream"`
+		MaxTokens int             `json:"max_tokens"`
+		Messages  []openAIMessage `json:"messages"`
+	}{Model: o.Model, Stream: false, MaxTokens: condenseMaxTokens, Messages: payload})
+	if err != nil {
+		return "", fmt.Errorf("encoding condense request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.BaseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("building condense request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if o.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+o.APIKey)
+	}
+
+	resp, err := o.Client.Do(req)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
+		return "", fmt.Errorf("condense request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("condense returned HTTP %d: %s", resp.StatusCode, readErrorBody(resp.Body))
+	}
+
+	var out struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", fmt.Errorf("decoding condense response: %w", err)
+	}
+	if len(out.Choices) == 0 || strings.TrimSpace(out.Choices[0].Message.Content) == "" {
+		return "", fmt.Errorf("condense returned no content")
+	}
+	return strings.TrimSpace(out.Choices[0].Message.Content), nil
 }
