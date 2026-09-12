@@ -67,6 +67,7 @@ func TestWalkSkipsGeneratedAndTests(t *testing.T) {
 			"frontend/src/gen/chat_pb.ts",
 			"frontend/node_modules/pkg/index.ts",
 			"chat-service/chat_test.go",
+			"frontend/src/components/chat/useChatStream.test.ts",
 			"docs/scalability-learning-plan.md":
 			t.Errorf("Walk() selected %q, which must be skipped", s.Path)
 		}
@@ -124,6 +125,7 @@ func fixtureTree(t *testing.T) string {
 		"corpus/background.md",
 		"chat-service/chat.go",
 		"chat-service/chat_test.go",
+		"frontend/src/components/chat/useChatStream.test.ts",
 		"chat-service/chat/chat.pb.go",
 		"order-service/orders/service.pb.go",
 		"order-service/orders_handler.go",

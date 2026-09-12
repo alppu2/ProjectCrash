@@ -77,8 +77,7 @@ func Walk(root string) ([]Source, error) {
 		if !allowedExts[strings.ToLower(path.Ext(rel))] {
 			return nil
 		}
-		// Assertions retrieve poorly and crowd real code out of top_k.
-		if strings.HasSuffix(rel, "_test.go") {
+		if isTestFile(rel) {
 			return nil
 		}
 		if kind, ok := rootKind(rel); ok {
@@ -90,6 +89,21 @@ func Walk(root string) ([]Source, error) {
 		return nil, fmt.Errorf("walking %s: %w", root, err)
 	}
 	return out, nil
+}
+
+// isTestFile covers both conventions this repo uses. Assertions retrieve
+// poorly and crowd real code out of top_k.
+func isTestFile(rel string) bool {
+	base := path.Base(rel)
+	if strings.HasSuffix(base, "_test.go") {
+		return true
+	}
+	for _, infix := range []string{".test.", ".spec."} {
+		if strings.Contains(base, infix) {
+			return true
+		}
+	}
+	return false
 }
 
 // rootKind reports the kind for rel, or false if it is under no allowed root.
