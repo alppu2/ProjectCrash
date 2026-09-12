@@ -52,7 +52,16 @@ The chat replies with the echo stub out of the box, which needs no model and no 
 docker compose --profile llm up --build
 ```
 
-That adds an `ollama` container which pulls `llama3.2:3b` (~2GB) on first start and serves it over the compose network — nothing is published to the host, so the unauthenticated inference API is not reachable from outside Docker. It claims the GPU via `gpus: all`, which needs an NVIDIA GPU and the NVIDIA Container Toolkit; without them the profile fails to start. Removing that line from `docker-compose.yml` falls back to CPU inference, which works for a 3B model but answers in tens of seconds rather than a second or two.
+The model-backed chat answers from a retrieval index over `corpus/background.md` and this repository's own source, so build the index once the stack is healthy:
+
+```bash
+docker compose run --rm ingest          # incremental; re-run after edits
+docker compose run --rm ingest --full   # re-embed everything
+```
+
+`chat-service` refuses to start against a missing or empty collection: with nothing stuffed into the prompt there is no grounding to fall back to, and serving ungrounded answers about a real person is worse than not serving.
+
+That adds an `ollama` container which pulls `llama3.2:3b` (~2GB) and `nomic-embed-text` (~274MB) on first start and serves them over the compose network, plus a `qdrant` container holding the vectors — nothing is published to the host, so the unauthenticated inference API is not reachable from outside Docker. It claims the GPU via `gpus: all`, which needs an NVIDIA GPU and the NVIDIA Container Toolkit; without them the profile fails to start. Removing that line from `docker-compose.yml` falls back to CPU inference, which works for a 3B model but answers in tens of seconds rather than a second or two.
 
 Ollama is a local development dependency, not a deployed one. Deployment drops the `llm` profile and points the same responder at a hosted OpenAI-compatible endpoint: keep `RESPONDER=llm`, set `LLM_BASE_URL` and `LLM_API_KEY`, change no code and no compose. Any `docker compose up` without `--profile llm` skips the container outright, and `chat-service` does not wait on it.
 
@@ -64,9 +73,9 @@ docker compose up --build --scale order-service=3
 
 ## Status
 
-Working today: the full service mesh, observability stack, horizontal scaling, end-to-end streaming chat, and real model replies from a local Ollama over an OpenAI-compatible API. The responder is a single Go interface (`chat-service/responder.go`) with two implementations — an echo stub for zero-cost load tests, and `OpenAIResponder` for any compatible provider — selected by `RESPONDER` at startup. Provider failures are classified and counted (`chat_provider_errors_total`), alongside token counts and time-to-first-token.
+Working today: the full service mesh, observability stack, horizontal scaling, end-to-end streaming chat, and real model replies from a local Ollama over an OpenAI-compatible API, grounded in passages retrieved from Qdrant. The responder is a single Go interface (`chat-service/responder.go`) with three implementations — an echo stub for zero-cost load tests, `OpenAIResponder` for any compatible provider, and `RetrievingResponder`, which wraps it with a per-turn grounding prompt — selected by `RESPONDER` at startup. Provider failures are classified and counted (`chat_provider_errors_total`), alongside token counts and time-to-first-token.
 
-Next: a personal-background system prompt, retrieval over my project and work history, a hosted provider (which needs a spend cap, a `max_tokens` ceiling and rate limiting first — the `Chat` RPC is unauthenticated by design), TLS and a public domain, and Kubernetes with autoscaling driven by queue depth.
+Next: hybrid dense-plus-keyword search, a retrieval eval harness, citations surfaced in the frontend, a hosted provider (which needs a spend cap, a `max_tokens` ceiling and rate limiting first — the `Chat` RPC is unauthenticated by design), TLS and a public domain, and Kubernetes with autoscaling driven by queue depth.
 
 ## Contact
 

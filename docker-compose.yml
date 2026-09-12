@@ -41,11 +41,6 @@ services:
     container_name: chat-service
     env_file:
       - chat-service/.env
-    volumes:
-      # The directory is mounted, not background.md itself: Docker would create
-      # a directory in place of a missing host file. background.md is absent on a
-      # fresh clone, so loadCorpus falls back to the embedded stub.
-      - ./chat-service/corpus:/etc/chat-service/corpus:ro
     networks:
       - micro-network
     depends_on:
@@ -80,7 +75,8 @@ services:
       # Keep the model resident between turns; a cold VRAM load costs ~33s.
       OLLAMA_KEEP_ALIVE: 30m
       # The default 4096 truncates silently, and the envelope is what falls out
-      # first. Fits maxHistoryBytes + maxCorpusBytes with room for the reply.
+      # first. Fits maxHistoryBytes plus a RETRIEVAL_TOP_K Sources block with
+      # room for the reply.
       OLLAMA_CONTEXT_LENGTH: 16384
     # Pull on every start so a fresh volume self-provisions. The pull is a no-op
     # once the model is in the volume. NOTE: this model name is duplicated in
@@ -143,6 +139,25 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
+
+  ingest:
+    build:
+      context: .
+      dockerfile: chat-service/Dockerfile
+    # Not started by `up`: `docker compose run --rm ingest`. Serving stays
+    # decoupled from indexing — indexing at startup would grow boot time with
+    # the corpus and re-embed on every restart.
+    profiles:
+      - tools
+    entrypoint: ["/ingest"]
+    env_file:
+      - chat-service/.env
+    volumes:
+      # The repository is its own corpus. Read-only: ingest never writes here,
+      # and the allowlist in sources.go is what keeps .env out of the index.
+      - .:/workspace:ro
+    networks:
+      - micro-network
 
   mongodb:
     image: mongo:latest

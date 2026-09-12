@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -28,48 +30,21 @@ func TestNewResponder(t *testing.T) {
 			},
 		},
 		{
-			name: "llm uses the documented defaults",
-			env:  map[string]string{"RESPONDER": "llm"},
-			check: func(t *testing.T, r Responder) {
-				o, ok := r.(*OpenAIResponder)
-				if !ok {
-					t.Fatalf("responder = %T, want *OpenAIResponder", r)
-				}
-				if o.BaseURL != defaultLLMBaseURL {
-					t.Errorf("BaseURL = %q, want %q", o.BaseURL, defaultLLMBaseURL)
-				}
-				if o.Model != defaultLLMModel {
-					t.Errorf("Model = %q, want %q", o.Model, defaultLLMModel)
-				}
-				if o.APIKey != "" {
-					t.Errorf("APIKey = %q, want empty — a local Ollama needs no credential", o.APIKey)
-				}
-				if o.Client == nil {
-					t.Error("Client = nil, want a client with a response-header timeout")
-				}
-			},
+			// With nothing stuffed into the prompt there is no grounding to
+			// fall back to, so an unreachable embedder must not degrade to echo.
+			name:    "llm without a reachable embedder is a startup error, never a silent echo",
+			env:     map[string]string{"RESPONDER": "llm"},
+			wantErr: true,
 		},
 		{
-			name: "llm honours base url, model and api key",
-			env: map[string]string{
-				"RESPONDER":    "llm",
-				"LLM_BASE_URL": "https://api.groq.com/openai/v1/",
-				"LLM_MODEL":    "llama-3.3-70b-versatile",
-				"LLM_API_KEY":  "gsk_secret",
-			},
-			check: func(t *testing.T, r Responder) {
-				o := r.(*OpenAIResponder)
-				// Trimmed, or request paths become //chat/completions.
-				if o.BaseURL != "https://api.groq.com/openai/v1" {
-					t.Errorf("BaseURL = %q, want %q", o.BaseURL, "https://api.groq.com/openai/v1")
-				}
-				if o.Model != "llama-3.3-70b-versatile" {
-					t.Errorf("Model = %q, want %q", o.Model, "llama-3.3-70b-versatile")
-				}
-				if o.APIKey != "gsk_secret" {
-					t.Errorf("APIKey = %q, want %q", o.APIKey, "gsk_secret")
-				}
-			},
+			name:    "an unknown EMBEDDER is a startup error",
+			env:     map[string]string{"RESPONDER": "llm", "EMBEDDER": "voyage"},
+			wantErr: true,
+		},
+		{
+			name:    "an EMBED_BASE_URL embedding credentials fails at startup",
+			env:     map[string]string{"RESPONDER": "llm", "EMBED_BASE_URL": "https://user:hunter2@api.voyageai.com/v1"},
+			wantErr: true,
 		},
 		{
 			// A silent fallback would make a misconfigured demo look working.
@@ -111,14 +86,15 @@ func TestNewResponder(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// The default CORPUS_PATH is the container mount, which no dev box
-			// has. A real directory with no file exercises the stub fallback.
-			t.Setenv("CORPUS_PATH", filepath.Join(t.TempDir(), "background.md"))
+			// Nothing listens on port 1, so an llm case that gets past its
+			// config checks fails on the embedder probe rather than reaching
+			// the compose network this test does not have.
+			t.Setenv("EMBED_BASE_URL", "http://127.0.0.1:1/v1")
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
 
-			r, err := newResponder()
+			r, err := newResponder(context.Background())
 			if tt.wantErr {
 				if err == nil {
 					t.Fatalf("newResponder() error = nil, want an error (got %T)", r)
@@ -163,36 +139,122 @@ func TestNewLLMClientTimeout(t *testing.T) {
 	}
 }
 
-// The whole feature is the corpus reaching the model. Dropped here, the
-// assistant answers as a generic chatbot and nothing errors.
-func TestNewResponderLoadsCorpusIntoSystemPrompt(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "corpus.md")
-	const corpus = "Aleksi shipped an Envoy-fronted Go stack."
-	if err := os.WriteFile(path, []byte(corpus), 0o600); err != nil {
-		t.Fatalf("writing fixture: %v", err)
-	}
-	t.Setenv("RESPONDER", "llm")
-	t.Setenv("CORPUS_PATH", path)
+// stubRetrievalBackends stands in for Ollama's /embeddings and Qdrant's
+// collection info, so RESPONDER=llm can be constructed with neither running.
+func stubRetrievalBackends(t *testing.T, dims, points int) (embedURL, qdrantURL string) {
+	t.Helper()
 
-	r, err := newResponder()
+	embed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		type item struct {
+			Embedding []float32 `json:"embedding"`
+			Index     int       `json:"index"`
+		}
+		out := struct {
+			Data []item `json:"data"`
+		}{}
+		for i := range req.Input {
+			out.Data = append(out.Data, item{Embedding: make([]float32, dims), Index: i})
+		}
+		json.NewEncoder(w).Encode(out)
+	}))
+	t.Cleanup(embed.Close)
+
+	qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"result":{"points_count":%d,"config":{"params":{"vectors":{"size":%d}}}}}`, points, dims)
+	}))
+	t.Cleanup(qdrant.Close)
+
+	return embed.URL, qdrant.URL
+}
+
+// The LLM_* configuration has to reach the responder retrieval delegates to,
+// or a hosted provider is configured and never called.
+func TestNewResponderConfiguresTheGroundedResponder(t *testing.T) {
+	embedURL, qdrantURL := stubRetrievalBackends(t, 768, 412)
+	t.Setenv("RESPONDER", "llm")
+	t.Setenv("LLM_BASE_URL", "https://api.groq.com/openai/v1/")
+	t.Setenv("LLM_MODEL", "llama-3.3-70b-versatile")
+	t.Setenv("LLM_API_KEY", "gsk_secret")
+	t.Setenv("EMBED_BASE_URL", embedURL)
+	t.Setenv("QDRANT_URL", qdrantURL)
+
+	r, err := newResponder(context.Background())
 	if err != nil {
 		t.Fatalf("newResponder() error = %v, want nil", err)
 	}
-	o, ok := r.(*OpenAIResponder)
+	retriever, ok := r.(*RetrievingResponder)
 	if !ok {
-		t.Fatalf("responder = %T, want *OpenAIResponder", r)
+		t.Fatalf("responder = %T, want *RetrievingResponder", r)
 	}
-	if !strings.Contains(o.System, corpus) {
-		t.Errorf("System = %q, want it to contain the corpus", o.System)
+	o, ok := retriever.Inner.(*OpenAIResponder)
+	if !ok {
+		t.Fatalf("Inner = %T, want *OpenAIResponder", retriever.Inner)
+	}
+	// Trimmed, or request paths become //chat/completions.
+	if o.BaseURL != "https://api.groq.com/openai/v1" {
+		t.Errorf("BaseURL = %q, want %q", o.BaseURL, "https://api.groq.com/openai/v1")
+	}
+	if o.Model != "llama-3.3-70b-versatile" {
+		t.Errorf("Model = %q, want %q", o.Model, "llama-3.3-70b-versatile")
+	}
+	if o.APIKey != "gsk_secret" {
+		t.Errorf("APIKey = %q, want %q", o.APIKey, "gsk_secret")
+	}
+	if retriever.TopK != defaultTopK || retriever.Floor != defaultBackgroundFloor {
+		t.Errorf("TopK, Floor = %d, %d; want the documented %d, %d", retriever.TopK, retriever.Floor, defaultTopK, defaultBackgroundFloor)
 	}
 }
 
-// A mount that resolved to something unreadable must not boot: the stub would
-// answer as though it were his background.
-func TestNewResponderFailsOnBrokenCorpusMount(t *testing.T) {
-	t.Setenv("RESPONDER", "llm")
-	t.Setenv("CORPUS_PATH", t.TempDir()) // a directory, not a file
-	if _, err := newResponder(); err == nil {
-		t.Error("newResponder() error = nil, want an error for an unreadable corpus")
+// An empty collection presents as a chat that works but knows nothing, which
+// is worse than refusing to start.
+func TestNewResponderRejectsEmptyAndMismatchedCollections(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		embedURL, qdrantURL := stubRetrievalBackends(t, 768, 0)
+		t.Setenv("RESPONDER", "llm")
+		t.Setenv("EMBED_BASE_URL", embedURL)
+		t.Setenv("QDRANT_URL", qdrantURL)
+		if _, err := newResponder(context.Background()); err == nil {
+			t.Error("newResponder() error = nil, want a refusal to start against an empty collection")
+		}
+	})
+
+	t.Run("dimension mismatch", func(t *testing.T) {
+		// The collection answers 1536 while the embedder probes 768: same API,
+		// another model's space, plausible scores for the wrong passages.
+		embed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"data":[{"embedding":` + vectorJSON(768) + `,"index":0}]}`))
+		}))
+		defer embed.Close()
+		qdrant := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte(`{"result":{"points_count":10,"config":{"params":{"vectors":{"size":1536}}}}}`))
+		}))
+		defer qdrant.Close()
+
+		t.Setenv("RESPONDER", "llm")
+		t.Setenv("EMBED_BASE_URL", embed.URL)
+		t.Setenv("QDRANT_URL", qdrant.URL)
+		if _, err := newResponder(context.Background()); err == nil {
+			t.Error("newResponder() error = nil, want a dimension mismatch refusal")
+		}
+	})
+}
+
+func vectorJSON(dims int) string {
+	b, _ := json.Marshal(make([]float32, dims))
+	return string(b)
+}
+
+// A blank line in .env must not become top_k=0, which retrieves nothing and
+// looks like an empty corpus.
+func TestEnvIntRejectsNonPositive(t *testing.T) {
+	for _, v := range []string{"", "0", "-3", "six"} {
+		t.Setenv("RETRIEVAL_TOP_K", v)
+		if got := envInt("RETRIEVAL_TOP_K", 6); got != 6 {
+			t.Errorf("envInt(%q) = %d, want the fallback 6", v, got)
+		}
 	}
 }
