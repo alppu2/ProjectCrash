@@ -132,9 +132,9 @@ func (e *OpenAIEmbedder) post(ctx context.Context, texts []string) ([][]float32,
 	}
 
 	// Ollama answers in request order, but ordering is not part of the API.
-	// Trusting arrival order would pair each chunk with another chunk's vector
-	// — an index that searches cleanly and answers wrongly.
-	sort.Slice(out.Data, func(i, j int) bool { return out.Data[i].Index < out.Data[j].Index })
+	// Stable, so a provider that omits index — every item decoding as 0 —
+	// keeps arrival order instead of having equal keys shuffled.
+	sort.SliceStable(out.Data, func(i, j int) bool { return out.Data[i].Index < out.Data[j].Index })
 	vecs := make([][]float32, len(out.Data))
 	for i, item := range out.Data {
 		vecs[i] = item.Embedding

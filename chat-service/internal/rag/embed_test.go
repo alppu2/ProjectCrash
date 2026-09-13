@@ -71,6 +71,47 @@ func TestEmbedReordersByIndex(t *testing.T) {
 	}
 }
 
+// A provider that omits index decodes every item as index 0, leaving arrival
+// order as the only order there is. An unstable sort is free to shuffle equal
+// keys, pairing chunks with each other's vectors.
+func TestEmbedKeepsArrivalOrderWhenIndexIsOmitted(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		type item struct {
+			Embedding []float32 `json:"embedding"`
+		}
+		out := struct {
+			Data []item `json:"data"`
+		}{}
+		for i := range req.Input {
+			out.Data = append(out.Data, item{Embedding: []float32{float32(i)}})
+		}
+		json.NewEncoder(w).Encode(out)
+	}))
+	defer srv.Close()
+
+	e, err := NewOpenAIEmbedder(context.Background(), srv.URL, "m", "", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAIEmbedder() error = %v", err)
+	}
+	texts := make([]string, EmbedBatchSize)
+	for i := range texts {
+		texts[i] = "chunk"
+	}
+	got, err := e.Embed(context.Background(), texts)
+	if err != nil {
+		t.Fatalf("Embed() error = %v", err)
+	}
+	for i, vec := range got {
+		if vec[0] != float32(i) {
+			t.Fatalf("vectors[%d][0] = %v, want %v — arrival order was not kept", i, vec[0], float32(i))
+		}
+	}
+}
+
 // Dims is probed once at construction. Re-probing per call would add a round
 // trip to every ingest batch and every chat turn.
 func TestDimsProbedOnceAtConstruction(t *testing.T) {
