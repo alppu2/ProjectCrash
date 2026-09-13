@@ -180,6 +180,25 @@ func TestRetrievalObservesBestScoreNotFirst(t *testing.T) {
 	}
 }
 
+// RETRIEVAL_MIN_SCORE is tuned from this histogram. Observed after the
+// threshold, it can only ever show scores above it, and the declined turns —
+// the ones that say whether the threshold is too high — record nothing.
+func TestRetrievalObservesTopScoreBeforeThreshold(t *testing.T) {
+	s := &fakeSearcher{byKind: map[string][]rag.Hit{
+		"background": {hit("b1", "background", "corpus/background.md", "irrelevant", 0.21)},
+		"":           {hit("s1", "source", "chat-service/chat.go", "nearly", 0.47)},
+	}}
+	beforeSum, beforeCount := histogramSum(t, chatRetrievalTopScore), histogramCount(chatRetrievalTopScore)
+	drain(t, newTestRetriever(s, &fakeGrounder{}, &fakeCondenser{}), userTurn("what is the capital of Peru?"))
+
+	if got := histogramCount(chatRetrievalTopScore) - beforeCount; got != 1 {
+		t.Fatalf("top score observations = %d, want 1 for a turn where nothing cleared the threshold", got)
+	}
+	if got := histogramSum(t, chatRetrievalTopScore) - beforeSum; got < 0.46 || got > 0.48 {
+		t.Errorf("observed top score = %v, want the declined turn's best, 0.47", got)
+	}
+}
+
 // Citations carry file and line for source, heading for markdown. A citation
 // nobody can follow is not a citation.
 func TestAssemblePromptCitationShape(t *testing.T) {

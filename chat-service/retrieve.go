@@ -88,11 +88,6 @@ func (r *RetrievingResponder) ground(ctx context.Context, msgs []*chatpb.Message
 	}
 
 	chatRetrievalChunks.Observe(float64(len(hits)))
-	if len(hits) > 0 {
-		// The best score of the turn, not hits[0]: the merged list leads with
-		// the background quota, which routinely scores below the real winner.
-		chatRetrievalTopScore.Observe(float64(bestScore(hits)))
-	}
 	if len(hits) == 0 {
 		// Not an error. The envelope's "say so plainly" rule takes over, which
 		// is the honest answer to a question the corpus cannot answer.
@@ -132,9 +127,17 @@ func (r *RetrievingResponder) search(ctx context.Context, vec []float32) ([]rag.
 		return nil, err
 	}
 
+	merged := append(floor, rest...)
+	if len(merged) > 0 {
+		// Before the threshold, or the histogram MIN_SCORE is tuned from can
+		// never show how far below it the declined turns fell. The max, not
+		// merged[0]: the list leads with the quota, which scores below the winner.
+		chatRetrievalTopScore.Observe(float64(bestScore(merged)))
+	}
+
 	seen := make(map[string]bool, r.TopK)
 	out := make([]rag.Hit, 0, r.TopK)
-	for _, h := range append(floor, rest...) {
+	for _, h := range merged {
 		if seen[h.ID] || len(out) == r.TopK {
 			continue
 		}
