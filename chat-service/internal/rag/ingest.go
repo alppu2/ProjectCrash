@@ -50,8 +50,8 @@ func contentHash(body []byte) string {
 }
 
 // Ingest indexes Root into Store. The sweep runs only after the walk completes
-// successfully — a partial run's unvisited sources are indistinguishable from
-// deleted ones.
+// successfully and finds something — a partial or empty run's unvisited sources
+// are indistinguishable from deleted ones.
 func Ingest(ctx context.Context, opts Options) (Stats, error) {
 	var stats Stats
 	runID := uuid.NewString()
@@ -75,6 +75,11 @@ func Ingest(ctx context.Context, opts Options) (Stats, error) {
 		return stats, err
 	}
 	stats.Scanned = len(sources)
+	// An empty walk is a mis-pointed root, not a deleted repository. The sweep
+	// below would otherwise delete every point in the collection.
+	if len(sources) == 0 {
+		return stats, fmt.Errorf("no indexable files under %s; refusing to sweep the collection", opts.Root)
+	}
 
 	var unchanged []string
 	for _, src := range sources {

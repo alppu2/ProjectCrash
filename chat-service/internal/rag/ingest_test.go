@@ -268,6 +268,30 @@ func TestIngestDoesNotSweepAfterEmbedFailure(t *testing.T) {
 	}
 }
 
+// A walk that finds nothing is a mis-pointed root, not a deleted repository.
+// Sweeping after it deletes the entire collection, and chat-service then
+// refuses to start against the empty index.
+func TestIngestRefusesToSweepAfterEmptyWalk(t *testing.T) {
+	root := ingestFixture(t)
+	store, fake, done := newFakeQdrant(t)
+	defer done()
+
+	runIngest(t, root, store, false)
+	before := len(fake.points)
+
+	_, err := Ingest(context.Background(), Options{
+		Root:     t.TempDir(),
+		Store:    store,
+		Embedder: fakeEmbedder{model: "fake", dims: 8},
+	})
+	if err == nil {
+		t.Fatal("Ingest() error = nil, want a refusal to sweep after an empty walk")
+	}
+	if len(fake.points) != before || fake.deletes != 0 {
+		t.Errorf("points = %d (deleted %d) after an empty walk, want %d untouched", len(fake.points), fake.deletes, before)
+	}
+}
+
 var errEmbedderDown = errStub("embedder down")
 
 type errStub string
