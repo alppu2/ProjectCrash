@@ -52,14 +52,13 @@ The chat replies with the echo stub out of the box, which needs no model and no 
 docker compose --profile llm up --build
 ```
 
-The model-backed chat answers from a retrieval index over `corpus/background.md` and this repository's own source, so build the index once the stack is healthy:
+The model-backed chat answers from a retrieval index over `corpus/background.md` and this repository's own source. On a fresh clone that index does not exist yet, and `chat-service` refuses to start without it: with nothing stuffed into the prompt there is no grounding to fall back to, and serving ungrounded answers about a real person is worse than not serving. It restarts on failure, so build the index and it comes up on its own:
 
 ```bash
-docker compose run --rm ingest          # incremental; re-run after edits
-docker compose run --rm ingest --full   # re-embed everything
+docker compose --profile llm up --build -d
+docker compose run --rm ingest          # first run embeds everything; re-run after edits
+docker compose run --rm ingest --full   # ignore content hashes and re-embed everything
 ```
-
-`chat-service` refuses to start against a missing or empty collection: with nothing stuffed into the prompt there is no grounding to fall back to, and serving ungrounded answers about a real person is worse than not serving.
 
 That adds an `ollama` container which pulls `llama3.2:3b` (~2GB) and `nomic-embed-text` (~274MB) on first start and serves them over the compose network, plus a `qdrant` container holding the vectors — nothing is published to the host, so the unauthenticated inference API is not reachable from outside Docker. It claims the GPU via `gpus: all`, which needs an NVIDIA GPU and the NVIDIA Container Toolkit; without them the profile fails to start. Removing that line from `docker-compose.yml` falls back to CPU inference, which works for a 3B model but answers in tens of seconds rather than a second or two.
 

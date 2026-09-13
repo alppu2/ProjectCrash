@@ -41,6 +41,10 @@ services:
     container_name: chat-service
     env_file:
       - chat-service/.env
+    # RESPONDER=llm exits at startup until the retrieval index exists. Restarting
+    # on failure lets a fresh `up` recover once ingest has run, instead of
+    # staying down until someone starts it by hand.
+    restart: on-failure
     networks:
       - micro-network
     depends_on:
@@ -66,6 +70,7 @@ services:
     # runtime — the onboarding path in the README stays a one-liner.
     profiles:
       - llm
+      - tools
     # No published host port: chat-service reaches this over micro-network, and
     # keeping it off the host avoids exposing an unauthenticated inference API.
     # Use `docker compose exec ollama ...` for debugging.
@@ -120,6 +125,7 @@ services:
     # tracked default (echo) must still boot with neither container.
     profiles:
       - llm
+      - tools
     # No published host port, for the same reason as ollama: the REST API is
     # unauthenticated. Use `docker compose exec qdrant ...` to debug.
     volumes:
@@ -158,6 +164,14 @@ services:
       - .:/workspace:ro
     networks:
       - micro-network
+    # Both also carry the tools profile: a dependency outside every active
+    # profile is undefined, and compose rejects the whole project. With it,
+    # `run --rm ingest` brings them up on a cold stack.
+    depends_on:
+      ollama:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
 
   mongodb:
     image: mongo:latest
