@@ -131,6 +131,18 @@ func newRetriever(ctx context.Context, inner *OpenAIResponder) (*RetrievingRespo
 		return nil, fmt.Errorf("unknown EMBEDDER %q, want ollama or openai", name)
 	}
 
+	// Checked before any network call. Both parse cleanly and would otherwise
+	// fail silently on every turn.
+	topK := envInt("RETRIEVAL_TOP_K", defaultTopK)
+	floor := envInt("RETRIEVAL_BACKGROUND_FLOOR", defaultBackgroundFloor)
+	minScore := envFloat("RETRIEVAL_MIN_SCORE", defaultMinScore)
+	if floor >= topK {
+		return nil, fmt.Errorf("RETRIEVAL_BACKGROUND_FLOOR=%d must be below RETRIEVAL_TOP_K=%d, or no slot is left for source and docs", floor, topK)
+	}
+	if minScore < -1 || minScore > 1 {
+		return nil, fmt.Errorf("RETRIEVAL_MIN_SCORE=%v is outside cosine similarity's range of -1 to 1", minScore)
+	}
+
 	embedBase := envOr("EMBED_BASE_URL", defaultEmbedBaseURL)
 	if err := validateEmbedURL(embedBase); err != nil {
 		return nil, err
@@ -167,9 +179,9 @@ func newRetriever(ctx context.Context, inner *OpenAIResponder) (*RetrievingRespo
 		Embedder:  embedder,
 		Store:     store,
 		Condenser: inner,
-		TopK:      envInt("RETRIEVAL_TOP_K", defaultTopK),
-		MinScore:  float32(envFloat("RETRIEVAL_MIN_SCORE", defaultMinScore)),
-		Floor:     envInt("RETRIEVAL_BACKGROUND_FLOOR", defaultBackgroundFloor),
+		TopK:      topK,
+		MinScore:  float32(minScore),
+		Floor:     floor,
 	}, nil
 }
 

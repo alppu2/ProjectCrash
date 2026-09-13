@@ -258,3 +258,30 @@ func TestEnvIntRejectsNonPositive(t *testing.T) {
 		}
 	}
 }
+
+// Both parse cleanly and then fail silently on every turn: a percentage for a
+// cosine score retrieves nothing, and a floor that fills top_k leaves no slot
+// for code. Every other retrieval misconfiguration is already a startup error.
+func TestNewResponderRejectsRetrievalRangeErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		env  map[string]string
+	}{
+		{"min score given as a percentage", map[string]string{"RETRIEVAL_MIN_SCORE": "50"}},
+		{"floor consumes every slot", map[string]string{"RETRIEVAL_BACKGROUND_FLOOR": "6", "RETRIEVAL_TOP_K": "6"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedURL, qdrantURL := stubRetrievalBackends(t, 768, 412)
+			t.Setenv("RESPONDER", "llm")
+			t.Setenv("EMBED_BASE_URL", embedURL)
+			t.Setenv("QDRANT_URL", qdrantURL)
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			if _, err := newResponder(context.Background()); err == nil {
+				t.Error("newResponder() error = nil, want a startup error")
+			}
+		})
+	}
+}
