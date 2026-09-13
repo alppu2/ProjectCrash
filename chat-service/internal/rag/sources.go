@@ -74,6 +74,11 @@ func Walk(root string) ([]Source, error) {
 			}
 			return nil
 		}
+		// WalkDir's entries are lstat-based, so a symlink passes every name
+		// check below while ReadSource's os.ReadFile follows it to its target.
+		if !d.Type().IsRegular() {
+			return nil
+		}
 		if !allowedExts[strings.ToLower(path.Ext(rel))] {
 			return nil
 		}

@@ -99,6 +99,27 @@ func TestWalkKeepsNonGeneratedDirsNamedLikeGeneratedOnes(t *testing.T) {
 	}
 }
 
+// WalkDir's entries are lstat-based, so a symlink named like an allowed file
+// passes every name check while ReadSource's os.ReadFile follows it. Without
+// this, the allowlist filters names, not the bytes that reach visitors.
+func TestWalkSkipsSymlinks(t *testing.T) {
+	root := fixtureTree(t)
+	link := filepath.Join(root, "docs", "superpowers", "leak.md")
+	if err := os.Symlink(filepath.Join("..", "..", "chat-service", ".env"), link); err != nil {
+		t.Skipf("cannot create symlinks on this host: %v", err)
+	}
+
+	got, err := Walk(root)
+	if err != nil {
+		t.Fatalf("Walk() error = %v", err)
+	}
+	for _, s := range got {
+		if s.Path == "docs/superpowers/leak.md" {
+			t.Errorf("Walk() selected symlink %q, whose target is chat-service/.env", s.Path)
+		}
+	}
+}
+
 // Paths become citations and point IDs. A backslash on Windows would produce
 // a different ID for the same file than a Linux ingest run.
 func TestWalkUsesForwardSlashes(t *testing.T) {
