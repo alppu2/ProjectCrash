@@ -292,6 +292,28 @@ func TestIngestRefusesToSweepAfterEmptyWalk(t *testing.T) {
 	}
 }
 
+// A file that fails to parse keeps its previous chunks through the sweep, so
+// the index goes on quoting code that no longer exists. It must be counted, and
+// a caller that leaves Log unset must not panic on reaching it.
+func TestIngestCountsUnparseableFilesWithoutALogger(t *testing.T) {
+	root := ingestFixture(t)
+	write(t, root, "chat-service/broken.go", "package main\nfunc ( {")
+	store, _, done := newFakeQdrant(t)
+	defer done()
+
+	st, err := Ingest(context.Background(), Options{
+		Root:     root,
+		Store:    store,
+		Embedder: fakeEmbedder{model: "fake", dims: 8},
+	})
+	if err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	if st.Unparsed != 1 {
+		t.Errorf("Stats.Unparsed = %d, want 1", st.Unparsed)
+	}
+}
+
 var errEmbedderDown = errStub("embedder down")
 
 type errStub string

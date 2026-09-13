@@ -52,6 +52,9 @@ func main() {
 
 	fmt.Printf("  scanned  %4d files\n", stats.Scanned)
 	fmt.Printf("  skipped  %4d unchanged\n", stats.SkippedFiles)
+	if stats.Unparsed > 0 {
+		fmt.Printf("  unparsed %4d files, still indexed at their previous contents\n", stats.Unparsed)
+	}
 	fmt.Printf("  embedded %4d chunks from %d files\n", stats.EmbeddedChunks, stats.EmbeddedFiles)
 	fmt.Printf("  total    %4d points in %s\n", stats.Total, store.Collection)
 }

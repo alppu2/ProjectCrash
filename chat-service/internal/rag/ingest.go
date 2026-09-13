@@ -28,9 +28,16 @@ type Options struct {
 type Stats struct {
 	Scanned        int
 	SkippedFiles   int
+	Unparsed       int // kept at their previous chunks, which may now be stale
 	EmbeddedChunks int
 	EmbeddedFiles  int
 	Total          int
+}
+
+func (o Options) logf(format string, args ...any) {
+	if o.Log != nil {
+		o.Log(format, args...)
+	}
 }
 
 // PointID is deterministic, so a re-run overwrites rather than appends. Qdrant
@@ -97,9 +104,10 @@ func Ingest(ctx context.Context, opts Options) (Stats, error) {
 
 		chunks, err := chunkFile(src.Path, string(body))
 		if err != nil {
-			// One unparseable file must not leave the whole index stale.
-			opts.Log("  skipped %s: %v", src.Path, err)
-			stats.SkippedFiles++
+			// One unparseable file must not fail the run. The restamp keeps its
+			// previous chunks, so it is counted rather than passed off as skipped.
+			opts.logf("  unparsed %s: %v", src.Path, err)
+			stats.Unparsed++
 			unchanged = append(unchanged, src.Path)
 			continue
 		}
