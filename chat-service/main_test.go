@@ -8,7 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
+
+	"chat-service/internal/responder"
 )
 
 func TestNewResponder(t *testing.T) {
@@ -16,16 +17,16 @@ func TestNewResponder(t *testing.T) {
 		name    string
 		env     map[string]string
 		wantErr bool
-		check   func(t *testing.T, r Responder)
+		check   func(t *testing.T, r responder.Responder)
 	}{
 		{
 			name: "defaults to echo so an empty .env still boots",
 			// Explicitly empty, not unset: envOr treats both as absent, and
 			// this survives a shell that exports RESPONDER.
 			env: map[string]string{"RESPONDER": ""},
-			check: func(t *testing.T, r Responder) {
-				if _, ok := r.(*EchoResponder); !ok {
-					t.Errorf("responder = %T, want *EchoResponder", r)
+			check: func(t *testing.T, r responder.Responder) {
+				if _, ok := r.(*responder.EchoResponder); !ok {
+					t.Errorf("responder = %T, want *responder.EchoResponder", r)
 				}
 			},
 		},
@@ -121,24 +122,6 @@ func TestValidateBaseURLErrorOmitsCredentials(t *testing.T) {
 	}
 }
 
-// newLLMClient must set ResponseHeaderTimeout — the only thing between a
-// wedged provider and a pinned goroutine — and must NOT set Client.Timeout,
-// which would kill long generations.
-func TestNewLLMClientTimeout(t *testing.T) {
-	client := newLLMClient()
-
-	transport, ok := client.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("client.Transport = %T, want *http.Transport", client.Transport)
-	}
-	if transport.ResponseHeaderTimeout != 120*time.Second {
-		t.Errorf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, 120*time.Second)
-	}
-	if client.Timeout != 0 {
-		t.Errorf("client.Timeout = %v, want 0 — a whole-request timeout would kill long generations", client.Timeout)
-	}
-}
-
 // stubRetrievalBackends stands in for Ollama's /embeddings and Qdrant's
 // collection info, so RESPONDER=llm can be constructed with neither running.
 func stubRetrievalBackends(t *testing.T, dims, points int) (embedURL, qdrantURL string) {
@@ -186,13 +169,13 @@ func TestNewResponderConfiguresTheGroundedResponder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newResponder() error = %v, want nil", err)
 	}
-	retriever, ok := r.(*RetrievingResponder)
+	retriever, ok := r.(*responder.RetrievingResponder)
 	if !ok {
-		t.Fatalf("responder = %T, want *RetrievingResponder", r)
+		t.Fatalf("responder = %T, want *responder.RetrievingResponder", r)
 	}
-	o, ok := retriever.Inner.(*OpenAIResponder)
+	o, ok := retriever.Inner.(*responder.OpenAIResponder)
 	if !ok {
-		t.Fatalf("Inner = %T, want *OpenAIResponder", retriever.Inner)
+		t.Fatalf("Inner = %T, want *responder.OpenAIResponder", retriever.Inner)
 	}
 	// Trimmed, or request paths become //chat/completions.
 	if o.BaseURL != "https://api.groq.com/openai/v1" {
@@ -281,6 +264,38 @@ func TestNewResponderRejectsRetrievalRangeErrors(t *testing.T) {
 			}
 			if _, err := newResponder(context.Background()); err == nil {
 				t.Error("newResponder() error = nil, want a startup error")
+			}
+		})
+	}
+}
+
+// A trailing character on QDRANT_URL used to survive config and surface from
+// deep inside the store as "invalid port", naming Qdrant rather than the typo.
+func TestNewResponderRejectsMalformedQdrantURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"trailing dot picked up from prose", "http://qdrant:6333."},
+		{"no scheme", "qdrant:6333"},
+		{"credentials embedded", "http://user:hunter2@qdrant:6333"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedURL, _ := stubRetrievalBackends(t, 768, 412)
+			t.Setenv("RESPONDER", "llm")
+			t.Setenv("EMBED_BASE_URL", embedURL)
+			t.Setenv("QDRANT_URL", tt.url)
+
+			_, err := newResponder(context.Background())
+			if err == nil {
+				t.Fatal("newResponder() error = nil, want a startup error")
+			}
+			if !strings.Contains(err.Error(), "QDRANT_URL") {
+				t.Errorf("error = %q, want it to name QDRANT_URL", err)
+			}
+			if strings.Contains(err.Error(), "hunter2") {
+				t.Errorf("error = %q, want the credential omitted", err)
 			}
 		})
 	}

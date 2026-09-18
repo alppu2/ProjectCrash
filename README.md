@@ -72,7 +72,7 @@ docker compose up --build --scale order-service=3
 
 ## Status
 
-Working today: the full service mesh, observability stack, horizontal scaling, end-to-end streaming chat, and real model replies from a local Ollama over an OpenAI-compatible API, grounded in passages retrieved from Qdrant. The responder is a single Go interface (`chat-service/responder.go`) with three implementations — an echo stub for zero-cost load tests, `OpenAIResponder` for any compatible provider, and `RetrievingResponder`, which wraps it with a per-turn grounding prompt — selected by `RESPONDER` at startup. Provider failures are classified and counted (`chat_provider_errors_total`), alongside token counts and time-to-first-token.
+Working today: the full service mesh, observability stack, horizontal scaling, end-to-end streaming chat, and real model replies from a local Ollama over an OpenAI-compatible API, grounded in passages retrieved from Qdrant. The responder is a single Go interface (`chat-service/internal/responder/`) with three implementations — an echo stub for zero-cost load tests, `OpenAIResponder` for any compatible provider, and `RetrievingResponder`, which wraps it with a per-turn grounding prompt — selected by `RESPONDER` at startup. Provider failures are classified and counted (`chat_provider_errors_total`), alongside token counts and time-to-first-token.
 
 Next: hybrid dense-plus-keyword search, a retrieval eval harness, citations surfaced in the frontend, a hosted provider (which needs a spend cap, a `max_tokens` ceiling and rate limiting first — the `Chat` RPC is unauthenticated by design), TLS and a public domain, and Kubernetes with autoscaling driven by queue depth.
 

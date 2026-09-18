@@ -1,4 +1,4 @@
-package main
+package responder
 
 // corpusEnvelope is committed while the corpus is not: the prompt engineering
 // is portfolio surface, the personal detail is data. retrieve.go appends
@@ -16,3 +16,16 @@ Rules:
 - Keep answers short, a few sentences, unless asked for more.
 - You are talking to people evaluating his work: stay factual and warm, never
   salesy.`
+
+// unavailableEnvelope replaces the grounding prompt when retrieval fails
+// mid-stream. Degrade, don't die: the conversation survives, but the model is
+// told it cannot answer rather than left to answer from pretraining.
+const unavailableEnvelope = `You are the portfolio assistant on Aleksi Valta's engineering portfolio site.
+Its knowledge base is temporarily unavailable, so you have no material to answer from.
+Say plainly that you cannot look anything up right now and suggest trying again in a moment.
+Do not answer from memory, and do not invent any detail about him.`
+
+// citationRule is appended to corpusEnvelope when there is a Sources block to
+// cite. Without sources it would instruct the model to cite nothing.
+const citationRule = `
+- Cite the bracketed number of the source each claim comes from, like [2].`

@@ -1,4 +1,4 @@
-package main
+package responder
 
 import (
 	"context"
@@ -284,8 +284,8 @@ func TestCancellationIsReturnedBareAndUncounted(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Stream() error = %v, want a bare context.Canceled", err)
 	}
-	if classifyOutcome(err) != "cancelled" {
-		t.Errorf("classifyOutcome = %q, want cancelled", classifyOutcome(err))
+	if ClassifyOutcome(err) != "cancelled" {
+		t.Errorf("classifyOutcome = %q, want cancelled", ClassifyOutcome(err))
 	}
 	if got := errorCount(t, "unreachable"); got != before {
 		t.Errorf("chat_retrieval_errors_total{reason=\"unreachable\"} = %v, want %v — a cancelled client is not a retrieval failure", got, before)

@@ -1,4 +1,4 @@
-package main
+package responder
 
 import (
 	"context"
@@ -9,21 +9,9 @@ import (
 	"time"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/obs"
 	"chat-service/internal/rag"
 )
-
-// unavailableEnvelope replaces the grounding prompt when retrieval fails
-// mid-stream. Degrade, don't die: the conversation survives, but the model is
-// told it cannot answer rather than left to answer from pretraining.
-const unavailableEnvelope = `You are the portfolio assistant on Aleksi Valta's engineering portfolio site.
-Its knowledge base is temporarily unavailable, so you have no material to answer from.
-Say plainly that you cannot look anything up right now and suggest trying again in a moment.
-Do not answer from memory, and do not invent any detail about him.`
-
-// citationRule is appended to corpusEnvelope when there is a Sources block to
-// cite. Without sources it would instruct the model to cite nothing.
-const citationRule = `
-- Cite the bracketed number of the source each claim comes from, like [2].`
 
 type searcher interface {
 	Search(ctx context.Context, vec []float32, limit int, kind string) ([]rag.Hit, error)
@@ -59,7 +47,7 @@ func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatReques
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Usage{}, ctxErr
 		}
-		logWithTrace(ctx, slog.Default()).Warn("retrieval unavailable, degrading the reply", "error", err)
+		obs.LogWithTrace(ctx, slog.Default()).Warn("retrieval unavailable, degrading the reply", "error", err)
 		system = unavailableEnvelope
 	}
 	return r.Inner.withSystem(system).Stream(ctx, req, emit)
@@ -109,7 +97,7 @@ func (r *RetrievingResponder) query(ctx context.Context, msgs []*chatpb.Message)
 	chatCondenseDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
 		// Degraded retrieval beats no answer.
-		logWithTrace(ctx, slog.Default()).Warn("condensation failed, embedding the raw turn", "error", err)
+		obs.LogWithTrace(ctx, slog.Default()).Warn("condensation failed, embedding the raw turn", "error", err)
 		return raw
 	}
 	return condensed
