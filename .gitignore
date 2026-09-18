@@ -7,7 +7,10 @@ dist/
 docs/scalability-learning-plan.md
 **/*.exe
 
-# Personal corpus mounted into chat-service. Deny-by-default: the directory is
-# where personal material gets dropped, and this repo is public.
+# Personal corpus, indexed into Qdrant by chat-service/cmd/ingest. Deny-by-
+# default: the directory is where personal material gets dropped, and this repo
+# is public.
+corpus/*
+!corpus/.gitkeep
 chat-service/corpus/*
 !chat-service/corpus/stub.md

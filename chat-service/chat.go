@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -14,11 +12,13 @@ import (
 	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/obs"
+	"chat-service/internal/responder"
 )
 
 type chatServer struct {
 	chatpb.UnimplementedChatServiceServer
-	responder Responder
+	responder responder.Responder
 }
 
 // Chat records exactly one chatStreamsTotal increment and one
@@ -42,7 +42,7 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 	trace.SpanFromContext(ctx).SetAttributes(
 		attribute.Int("chat.history_len", len(req.GetMessages())),
 	)
-	log := logWithTrace(ctx, slog.Default())
+	log := obs.LogWithTrace(ctx, slog.Default())
 	log.Info("chat stream started", "history_len", len(req.GetMessages()))
 
 	usage, err := s.responder.Stream(ctx, req, func(delta string) error {
@@ -61,7 +61,7 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 
 	if err != nil {
 		// No Done frame on this path. usage may still be partial — log it.
-		outcome = classifyOutcome(err)
+		outcome = responder.ClassifyOutcome(err)
 		if outcome == "cancelled" {
 			log.Info("chat stream ended early", "error", err, "outcome", outcome,
 				"partial_input_tokens", usage.InputTokens, "partial_output_tokens", usage.OutputTokens)
@@ -79,22 +79,12 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 			OutputTokens: usage.OutputTokens,
 		}},
 	}); err != nil {
-		outcome = classifyOutcome(err)
+		outcome = responder.ClassifyOutcome(err)
 		return err
 	}
 
 	log.Info("chat stream completed", "output_tokens", usage.OutputTokens)
 	return nil
-}
-
-// classifyOutcome maps a responder or send error to a terminal status. A
-// client disconnect surfaces either as a wrapped context error or as a
-// Canceled status from stream.Send — errors.Is alone would miss the latter.
-func classifyOutcome(err error) string {
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.Canceled {
-		return "cancelled"
-	}
-	return "error"
 }
 
 // The endpoint is unauthenticated, so the client-side MAX_HISTORY cap is

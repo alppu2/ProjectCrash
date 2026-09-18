@@ -27,3 +27,10 @@ scrape_configs:
   - job_name: rabbitmq
     static_configs:
       - targets: ['rabbitmq:15692']
+
+  # Qdrant serves /metrics at the default path. A static target is correct for
+  # the same reason chat-service uses one: it has a container_name and is not
+  # scaled.
+  - job_name: qdrant
+    static_configs:
+      - targets: ['qdrant:6333']

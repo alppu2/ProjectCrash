@@ -3,6 +3,8 @@ package main
 import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+
+	"chat-service/internal/responder"
 )
 
 var (
@@ -24,29 +26,16 @@ var (
 		Buckets: []float64{.1, .25, .5, 1, 2, 5, 10, 30, 60, 120, 300},
 	})
 
-	chatProviderErrorsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "chat_provider_errors_total",
-		Help: "LLM provider failures by reason. chat_streams_total{status=\"error\"} counts the same failures; this breaks down the cause.",
-	}, []string{"reason"})
-
 	chatTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "chat_tokens_total",
 		Help: "Tokens reported by the responder, by direction.",
 	}, []string{"direction"})
-
-	chatTimeToFirstTokenSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
-		Name: "chat_time_to_first_token_seconds",
-		Help: "Latency from the provider request to the first streamed delta.",
-		// DefBuckets stop at 10s, dumping every cold VRAM load (~33s on a GTX
-		// 1060) into +Inf alongside nothing else.
-		Buckets: []float64{.1, .25, .5, 1, 2, 5, 10, 30, 60, 120},
-	})
 )
 
 // recordTokens accounts one turn's usage. Zeros are skipped so a responder
 // that reports no tokens (the echo stub, or a provider ignoring
 // stream_options.include_usage) leaves the series alone.
-func recordTokens(u Usage) {
+func recordTokens(u responder.Usage) {
 	if u.InputTokens > 0 {
 		chatTokensTotal.WithLabelValues("input").Add(float64(u.InputTokens))
 	}
