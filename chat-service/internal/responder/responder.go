@@ -1,9 +1,13 @@
-package main
+package responder
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
 )
@@ -70,4 +74,14 @@ func lastContent(history []*chatpb.Message) string {
 		return ""
 	}
 	return history[len(history)-1].GetContent()
+}
+
+// ClassifyOutcome maps a responder or send error to a terminal status. A
+// client disconnect surfaces either as a wrapped context error or as a
+// Canceled status from stream.Send — errors.Is alone would miss the latter.
+func ClassifyOutcome(err error) string {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || status.Code(err) == codes.Canceled {
+		return "cancelled"
+	}
+	return "error"
 }

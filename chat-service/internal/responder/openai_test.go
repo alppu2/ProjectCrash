@@ -1,4 +1,4 @@
-package main
+package responder
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -123,8 +124,8 @@ func TestOpenAIResponderRequestShape(t *testing.T) {
 		Content string `json:"content"`
 	}
 	type captured struct {
-		Model         string            `json:"model"`
-		Stream        bool              `json:"stream"`
+		Model         string `json:"model"`
+		Stream        bool   `json:"stream"`
 		StreamOptions struct {
 			IncludeUsage bool `json:"include_usage"`
 		} `json:"stream_options"`
@@ -236,8 +237,8 @@ func TestOpenAIResponderCancelMidStream(t *testing.T) {
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Stream() error = %v, want context.Canceled", err)
 	}
-	if got := classifyOutcome(err); got != "cancelled" {
-		t.Errorf("classifyOutcome(err) = %q, want %q", got, "cancelled")
+	if got := ClassifyOutcome(err); got != "cancelled" {
+		t.Errorf("ClassifyOutcome(err) = %q, want %q", got, "cancelled")
 	}
 }
 
@@ -614,5 +615,23 @@ func TestOpenAIResponderPrependsSystemMessage(t *testing.T) {
 	}
 	if !slices.Equal(body.Messages, want) {
 		t.Errorf("messages = %+v, want %+v", body.Messages, want)
+	}
+}
+
+// newLLMClient must set ResponseHeaderTimeout — the only thing between a
+// wedged provider and a pinned goroutine — and must NOT set Client.Timeout,
+// which would kill long generations.
+func TestNewLLMClientTimeout(t *testing.T) {
+	client := newLLMClient()
+
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("client.Transport = %T, want *http.Transport", client.Transport)
+	}
+	if transport.ResponseHeaderTimeout != 120*time.Second {
+		t.Errorf("ResponseHeaderTimeout = %v, want %v", transport.ResponseHeaderTimeout, 120*time.Second)
+	}
+	if client.Timeout != 0 {
+		t.Errorf("client.Timeout = %v, want 0 — a whole-request timeout would kill long generations", client.Timeout)
 	}
 }

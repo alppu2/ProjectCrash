@@ -1,4 +1,4 @@
-package main
+package responder
 
 import (
 	"context"
@@ -6,6 +6,9 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	chatpb "chat-service/chat"
 )
@@ -113,4 +116,14 @@ func TestEchoResponderPropagatesEmitError(t *testing.T) {
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("Stream() error = %v, want %v", err, sentinel)
 	}
+}
+
+// counterValue reads a prometheus counter without the testutil subpackage,
+// which needs go.sum entries this repo hasn't resolved (kylelemons/godebug).
+func counterValue(c prometheus.Counter) float64 {
+	var m dto.Metric
+	if err := c.Write(&m); err != nil {
+		return 0
+	}
+	return m.GetCounter().GetValue()
 }

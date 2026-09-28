@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/responder"
 )
 
 // counterValue reads a prometheus counter without the testutil subpackage,
@@ -72,17 +73,17 @@ func (f *fakeStream) terminal() *chatpb.Done {
 }
 
 func newTestServer() *chatServer {
-	return &chatServer{responder: &EchoResponder{}}
+	return &chatServer{responder: &responder.EchoResponder{}}
 }
 
-// erroringResponder returns a fixed error, ignoring ctx. EchoResponder cannot
+// erroringResponder returns a fixed error, ignoring ctx. responder.EchoResponder cannot
 // produce a failure independent of cancellation — that is its only error path.
 type erroringResponder struct {
 	err error
 }
 
-func (r *erroringResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
-	return Usage{}, r.err
+func (r *erroringResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (responder.Usage, error) {
+	return responder.Usage{}, r.err
 }
 
 func TestChatStreamsDeltasThenDone(t *testing.T) {
@@ -228,7 +229,7 @@ func TestValidateHistoryBounds(t *testing.T) {
 }
 
 func TestChatStopsOnClientCancel(t *testing.T) {
-	srv := &chatServer{responder: &EchoResponder{Delay: 20 * time.Millisecond}}
+	srv := &chatServer{responder: &responder.EchoResponder{Delay: 20 * time.Millisecond}}
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newFakeStream(ctx)
 	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{
@@ -295,14 +296,14 @@ func TestChatPropagatesSendError(t *testing.T) {
 	}
 }
 
-// usageResponder returns a fixed Usage and error without streaming, to drive
+// usageResponder returns a fixed responder.Usage and error without streaming, to drive
 // the handler's accounting directly. erroringResponder always reports zero.
 type usageResponder struct {
-	usage Usage
+	usage responder.Usage
 	err   error
 }
 
-func (r *usageResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
+func (r *usageResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (responder.Usage, error) {
 	return r.usage, r.err
 }
 
@@ -310,7 +311,7 @@ func TestChatRecordsTokenCounts(t *testing.T) {
 	beforeIn := counterValue(chatTokensTotal.WithLabelValues("input"))
 	beforeOut := counterValue(chatTokensTotal.WithLabelValues("output"))
 
-	srv := &chatServer{responder: &usageResponder{usage: Usage{
+	srv := &chatServer{responder: &usageResponder{usage: responder.Usage{
 		StopReason:   "stop",
 		InputTokens:  26,
 		OutputTokens: 298,
@@ -332,7 +333,7 @@ func TestChatRecordsPartialTokenCountsOnError(t *testing.T) {
 
 	// Those tokens were consumed, so the counter must move despite the error.
 	srv := &chatServer{responder: &usageResponder{
-		usage: Usage{OutputTokens: 400},
+		usage: responder.Usage{OutputTokens: 400},
 		err:   errors.New("provider exploded"),
 	}}
 	err := srv.Chat(&chatpb.ChatRequest{Messages: userHistory("hi")}, newFakeStream(context.Background()))
@@ -343,4 +344,12 @@ func TestChatRecordsPartialTokenCountsOnError(t *testing.T) {
 	if got := counterValue(chatTokensTotal.WithLabelValues("output")); got != beforeOut+400 {
 		t.Errorf("chat_tokens_total{direction=\"output\"} = %v, want %v", got, beforeOut+400)
 	}
+}
+
+func userHistory(contents ...string) []*chatpb.Message {
+	msgs := make([]*chatpb.Message, 0, len(contents))
+	for _, c := range contents {
+		msgs = append(msgs, &chatpb.Message{Role: chatpb.Role_ROLE_USER, Content: c})
+	}
+	return msgs
 }
