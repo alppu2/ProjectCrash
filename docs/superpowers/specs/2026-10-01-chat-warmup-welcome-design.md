@@ -1,7 +1,7 @@
 # Chat Warmup and Welcome — Design
 
 **Date:** 2026-10-01
-**Status:** Draft, awaiting review
+**Status:** Approved, not yet implemented
 
 The page opens on an empty chat, so a visitor has no cue for what it is
 for, and the first question pays the model's cold load (~33s for
@@ -26,6 +26,11 @@ The window is 20 minutes, below compose's `OLLAMA_KEEP_ALIVE: 30m`, so the
 cache never reports warm for a model Ollama has already unloaded. The window
 is measured from the last successful warmup only, which is conservative: real
 chat traffic also keeps the model resident.
+
+Warm state is global per chat-service process, held in memory, never per
+visitor: warmth is a property of the model in the provider, not of who loaded
+it. The client stores nothing, so every page load gets a fresh readiness
+answer. A restart clears it, and each replica warms independently.
 
 ## Architecture
 
