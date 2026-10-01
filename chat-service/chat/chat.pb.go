@@ -309,6 +309,79 @@ func (x *Done) GetOutputTokens() int32 {
 	return 0
 }
 
+// Empty for now; room for e.g. a model id without a new RPC.
+type WarmupRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WarmupRequest) Reset() {
+	*x = WarmupRequest{}
+	mi := &file_chat_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WarmupRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WarmupRequest) ProtoMessage() {}
+
+func (x *WarmupRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_chat_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WarmupRequest.ProtoReflect.Descriptor instead.
+func (*WarmupRequest) Descriptor() ([]byte, []int) {
+	return file_chat_proto_rawDescGZIP(), []int{4}
+}
+
+type WarmupResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WarmupResponse) Reset() {
+	*x = WarmupResponse{}
+	mi := &file_chat_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WarmupResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WarmupResponse) ProtoMessage() {}
+
+func (x *WarmupResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_chat_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WarmupResponse.ProtoReflect.Descriptor instead.
+func (*WarmupResponse) Descriptor() ([]byte, []int) {
+	return file_chat_proto_rawDescGZIP(), []int{5}
+}
+
 var File_chat_proto protoreflect.FileDescriptor
 
 const file_chat_proto_rawDesc = "" +
@@ -329,13 +402,16 @@ const file_chat_proto_rawDesc = "" +
 	"\vstop_reason\x18\x01 \x01(\tR\n" +
 	"stopReason\x12!\n" +
 	"\finput_tokens\x18\x02 \x01(\x05R\vinputTokens\x12#\n" +
-	"\routput_tokens\x18\x03 \x01(\x05R\foutputTokens*?\n" +
+	"\routput_tokens\x18\x03 \x01(\x05R\foutputTokens\"\x0f\n" +
+	"\rWarmupRequest\"\x10\n" +
+	"\x0eWarmupResponse*?\n" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\r\n" +
 	"\tROLE_USER\x10\x01\x12\x12\n" +
-	"\x0eROLE_ASSISTANT\x10\x022A\n" +
+	"\x0eROLE_ASSISTANT\x10\x022|\n" +
 	"\vChatService\x122\n" +
-	"\x04Chat\x12\x14.chat.v1.ChatRequest\x1a\x12.chat.v1.ChatChunk0\x01B\bZ\x06./chatb\x06proto3"
+	"\x04Chat\x12\x14.chat.v1.ChatRequest\x1a\x12.chat.v1.ChatChunk0\x01\x129\n" +
+	"\x06Warmup\x12\x16.chat.v1.WarmupRequest\x1a\x17.chat.v1.WarmupResponseB\bZ\x06./chatb\x06proto3"
 
 var (
 	file_chat_proto_rawDescOnce sync.Once
@@ -350,22 +426,26 @@ func file_chat_proto_rawDescGZIP() []byte {
 }
 
 var file_chat_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_chat_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_chat_proto_goTypes = []any{
-	(Role)(0),           // 0: chat.v1.Role
-	(*Message)(nil),     // 1: chat.v1.Message
-	(*ChatRequest)(nil), // 2: chat.v1.ChatRequest
-	(*ChatChunk)(nil),   // 3: chat.v1.ChatChunk
-	(*Done)(nil),        // 4: chat.v1.Done
+	(Role)(0),              // 0: chat.v1.Role
+	(*Message)(nil),        // 1: chat.v1.Message
+	(*ChatRequest)(nil),    // 2: chat.v1.ChatRequest
+	(*ChatChunk)(nil),      // 3: chat.v1.ChatChunk
+	(*Done)(nil),           // 4: chat.v1.Done
+	(*WarmupRequest)(nil),  // 5: chat.v1.WarmupRequest
+	(*WarmupResponse)(nil), // 6: chat.v1.WarmupResponse
 }
 var file_chat_proto_depIdxs = []int32{
 	0, // 0: chat.v1.Message.role:type_name -> chat.v1.Role
 	1, // 1: chat.v1.ChatRequest.messages:type_name -> chat.v1.Message
 	4, // 2: chat.v1.ChatChunk.done:type_name -> chat.v1.Done
 	2, // 3: chat.v1.ChatService.Chat:input_type -> chat.v1.ChatRequest
-	3, // 4: chat.v1.ChatService.Chat:output_type -> chat.v1.ChatChunk
-	4, // [4:5] is the sub-list for method output_type
-	3, // [3:4] is the sub-list for method input_type
+	5, // 4: chat.v1.ChatService.Warmup:input_type -> chat.v1.WarmupRequest
+	3, // 5: chat.v1.ChatService.Chat:output_type -> chat.v1.ChatChunk
+	6, // 6: chat.v1.ChatService.Warmup:output_type -> chat.v1.WarmupResponse
+	5, // [5:7] is the sub-list for method output_type
+	3, // [3:5] is the sub-list for method input_type
 	3, // [3:3] is the sub-list for extension type_name
 	3, // [3:3] is the sub-list for extension extendee
 	0, // [0:3] is the sub-list for field type_name
@@ -386,7 +466,7 @@ func file_chat_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_chat_proto_rawDesc), len(file_chat_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
