@@ -56,7 +56,9 @@ func main() {
 		slog.Error("failed to build responder", "error", err)
 		os.Exit(1)
 	}
-	chatpb.RegisterChatServiceServer(grpcServer, &chatServer{responder: resp})
+	// Echo has no Warmer, so the assertion leaves warmer nil.
+	warmer, _ := resp.(responder.Warmer)
+	chatpb.RegisterChatServiceServer(grpcServer, &chatServer{responder: resp, warmer: warmer})
 
 	slog.Info("chat service listening", "port", grpcPort)
 	if err := grpcServer.Serve(lis); err != nil {

@@ -7,6 +7,10 @@ import (
 	"chat-service/internal/responder"
 )
 
+// DefBuckets stop at 10s, which lands every model-backed call in +Inf. The low
+// buckets stay for the echo stub, which finishes sooner.
+var modelLatencyBuckets = []float64{.1, .25, .5, 1, 2, 5, 10, 30, 60, 120, 300}
+
 var (
 	chatStreamsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "chat_streams_total",
@@ -21,9 +25,18 @@ var (
 	chatStreamDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "chat_stream_duration_seconds",
 		Help:    "Wall time of a chat stream from request to terminal frame.",
-		// DefBuckets stop at 10s, which lands every model-backed stream in
-		// +Inf. The low buckets stay for the echo stub, which finishes sooner.
-		Buckets: []float64{.1, .25, .5, 1, 2, 5, 10, 30, 60, 120, 300},
+		Buckets: modelLatencyBuckets,
+	})
+
+	chatWarmupsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chat_warmups_total",
+		Help: "Total Warmup calls by outcome.",
+	}, []string{"outcome"})
+
+	chatWarmupDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name:    "chat_warmup_duration_seconds",
+		Help:    "Wall time of a Warmup call, including any shared cold load.",
+		Buckets: modelLatencyBuckets,
 	})
 
 	chatTokensTotal = promauto.NewCounterVec(prometheus.CounterOpts{

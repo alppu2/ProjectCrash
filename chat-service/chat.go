@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"strings"
 	"time"
@@ -19,6 +20,7 @@ import (
 type chatServer struct {
 	chatpb.UnimplementedChatServiceServer
 	responder responder.Responder
+	warmer    responder.Warmer // nil: nothing to warm, always ready
 }
 
 // Chat records exactly one chatStreamsTotal increment and one
@@ -85,6 +87,33 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 
 	log.Info("chat stream completed", "output_tokens", usage.OutputTokens)
 	return nil
+}
+
+// Warmup records exactly one chatWarmupsTotal increment and one
+// chatWarmupDuration observation, from the single deferred func.
+func (s *chatServer) Warmup(ctx context.Context, _ *chatpb.WarmupRequest) (*chatpb.WarmupResponse, error) {
+	start := time.Now()
+	outcome := "ok"
+	defer func() {
+		chatWarmupsTotal.WithLabelValues(outcome).Inc()
+		chatWarmupDuration.Observe(time.Since(start).Seconds())
+	}()
+
+	if s.warmer == nil {
+		return &chatpb.WarmupResponse{}, nil
+	}
+	if err := s.warmer.Warmup(ctx); err != nil {
+		outcome = responder.ClassifyOutcome(err)
+		log := obs.LogWithTrace(ctx, slog.Default())
+		if outcome == "cancelled" {
+			log.Info("warmup abandoned", "error", err)
+			return nil, status.FromContextError(err).Err()
+		}
+		// Provider error text can carry account detail; it stays in the log.
+		log.Warn("warmup failed", "error", err)
+		return nil, status.Error(codes.Unavailable, "the assistant is unavailable")
+	}
+	return &chatpb.WarmupResponse{}, nil
 }
 
 // The endpoint is unauthenticated, so the client-side MAX_HISTORY cap is

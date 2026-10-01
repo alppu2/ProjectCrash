@@ -353,3 +353,58 @@ func userHistory(contents ...string) []*chatpb.Message {
 	}
 	return msgs
 }
+
+type fakeWarmer struct{ err error }
+
+func (w fakeWarmer) Warmup(context.Context) error { return w.err }
+
+// Echo mode has no warmer; the GPU-less stack must still reach the welcome.
+func TestWarmupWithoutWarmerSucceeds(t *testing.T) {
+	before := counterValue(chatWarmupsTotal.WithLabelValues("ok"))
+
+	if _, err := newTestServer().Warmup(context.Background(), &chatpb.WarmupRequest{}); err != nil {
+		t.Fatalf("Warmup() error = %v, want nil", err)
+	}
+	if got := counterValue(chatWarmupsTotal.WithLabelValues("ok")); got != before+1 {
+		t.Errorf("ok count = %v, want %v", got, before+1)
+	}
+}
+
+// Provider error bodies can carry account detail; the browser gets a generic
+// Unavailable and the detail stays in the log.
+func TestWarmupHidesProviderDetail(t *testing.T) {
+	before := counterValue(chatWarmupsTotal.WithLabelValues("error"))
+	srv := &chatServer{
+		responder: &responder.EchoResponder{},
+		warmer:    fakeWarmer{err: errors.New("warmup returned HTTP 401: invalid key gsk_secret")},
+	}
+
+	_, err := srv.Warmup(context.Background(), &chatpb.WarmupRequest{})
+	if status.Code(err) != codes.Unavailable {
+		t.Fatalf("code = %v, want Unavailable", status.Code(err))
+	}
+	if strings.Contains(err.Error(), "gsk_secret") || strings.Contains(err.Error(), "401") {
+		t.Errorf("error %q leaks provider detail", err)
+	}
+	if got := counterValue(chatWarmupsTotal.WithLabelValues("error")); got != before+1 {
+		t.Errorf("error count = %v, want %v", got, before+1)
+	}
+}
+
+// A tab closed during a cold load is a hangup, not an outage.
+func TestWarmupCancelledIsNotAnError(t *testing.T) {
+	errBefore := counterValue(chatWarmupsTotal.WithLabelValues("error"))
+	cancelledBefore := counterValue(chatWarmupsTotal.WithLabelValues("cancelled"))
+	srv := &chatServer{responder: &responder.EchoResponder{}, warmer: fakeWarmer{err: context.Canceled}}
+
+	_, err := srv.Warmup(context.Background(), &chatpb.WarmupRequest{})
+	if status.Code(err) != codes.Canceled {
+		t.Errorf("code = %v, want Canceled", status.Code(err))
+	}
+	if got := counterValue(chatWarmupsTotal.WithLabelValues("cancelled")); got != cancelledBefore+1 {
+		t.Errorf("cancelled count = %v, want %v", got, cancelledBefore+1)
+	}
+	if got := counterValue(chatWarmupsTotal.WithLabelValues("error")); got != errBefore {
+		t.Errorf("error count = %v, want unchanged %v", got, errBefore)
+	}
+}
