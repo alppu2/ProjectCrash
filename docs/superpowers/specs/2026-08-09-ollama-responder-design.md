@@ -5,7 +5,7 @@
 
 Replace `chat-service`'s `EchoResponder` with one that calls a locally hosted
 model through Ollama, so the chat pipeline produces real replies at zero API
-cost. Roadmap step 3 in `docs/scalability-learning-plan.md` names Claude as the
+cost. Roadmap step 3 in `docs/roadmap.md` names Claude as the
 eventual provider; this lands the same shape first without a key, a bill, or a
 network dependency.
 

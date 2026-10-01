@@ -6,7 +6,7 @@
 Replace the whole-corpus system prompt with retrieval. `background.md` and this
 repository's own source become chunks in a vector database; each turn embeds the
 user's question, searches for the passages that answer it, and grounds the reply
-in those alone. Roadmap step 4 in `docs/scalability-learning-plan.md`.
+in those alone. Roadmap step 4 in `docs/roadmap.md`.
 
 Prerequisites, both shipped: the `Responder` seam
 (`2026-08-09-ollama-responder-design.md`) and the corpus envelope it grounds

@@ -1575,7 +1575,7 @@ func TestWalkSkipsGeneratedAndTests(t *testing.T) {
 			"frontend/src/gen/chat_pb.ts",
 			"frontend/node_modules/pkg/index.ts",
 			"chat-service/chat_test.go",
-			"docs/scalability-learning-plan.md":
+			"docs/roadmap.md":
 			t.Errorf("Walk() selected %q, which must be skipped", s.Path)
 		}
 	}
@@ -1613,7 +1613,7 @@ func fixtureTree(t *testing.T) string {
 		"frontend/node_modules/pkg/index.ts",
 		"proto/chat.proto",
 		"docs/superpowers/specs/a-design.md",
-		"docs/scalability-learning-plan.md",
+		"docs/roadmap.md",
 		"CLAUDE.md",
 		"README.md",
 		"secrets.txt",
@@ -1631,7 +1631,7 @@ func fixtureTree(t *testing.T) string {
 }
 ```
 
-Note: `docs/scalability-learning-plan.md` sits under `docs/`, which is **not** an allowed root — only `docs/superpowers` is. That file is gitignored and local-only; indexing it would publish the roadmap.
+Note: `docs/roadmap.md` sits under `docs/`, which is **not** an allowed root — only `docs/superpowers` is. That file is gitignored and local-only; indexing it would publish the roadmap.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 

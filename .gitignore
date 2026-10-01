@@ -4,7 +4,6 @@ dist/
 **/.env
 *.local
 .claude/
-docs/scalability-learning-plan.md
 **/*.exe
 
 # Personal corpus, indexed into Qdrant by chat-service/cmd/ingest. Deny-by-

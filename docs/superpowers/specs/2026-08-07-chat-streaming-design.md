@@ -6,7 +6,7 @@ Add a chat panel to the frontend backed by a new `chat-service` that streams res
 
 This ships with an **echo stub** responder — no LLM. It proves the transport, Envoy streaming route, incremental React render, and mid-stream cancel end to end at zero API cost. Roadmap step 3 (Claude API) swaps the responder implementation behind an interface; nothing else moves.
 
-Prerequisite for roadmap steps 3 (LLM) and 4 (RAG) in `docs/scalability-learning-plan.md`.
+Prerequisite for roadmap steps 3 (LLM) and 4 (RAG) in `docs/roadmap.md`.
 
 ## Decisions
 
