@@ -72,10 +72,10 @@ Shipped:
   a real person are worse than none
 - Metrics: retrieval top score, chunk count and errors; retrieval, embed and
   condense latency
+- `Warmup` RPC on page load: loads both models on Ollama, verifies the
+  provider on a hosted one, then shows a fixed welcome message
 
 Remaining:
-- Warm the model on page load and open with a fixed welcome message
-  (`docs/superpowers/specs/2026-10-01-chat-warmup-welcome-design.md`)
 - Hybrid dense + keyword search
 - Retrieval eval harness, to tune `RETRIEVAL_MIN_SCORE` against data rather
   than by feel
