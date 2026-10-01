@@ -102,6 +102,7 @@ func newRetriever(ctx context.Context, cfg Config, inner *OpenAIResponder) (*Ret
 		Embedder:  embedder,
 		Store:     store,
 		Condenser: inner,
+		Warm:      inner,
 		TopK:      cfg.TopK,
 		MinScore:  float32(cfg.MinScore),
 		Floor:     cfg.Floor,

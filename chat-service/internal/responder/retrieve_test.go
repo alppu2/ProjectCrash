@@ -309,3 +309,54 @@ func histogramSum(t *testing.T, h prometheus.Histogram) float64 {
 	}
 	return m.GetHistogram().GetSampleSum()
 }
+
+type countingEmbedder struct {
+	fakeEmbedder
+	calls int
+}
+
+func (c *countingEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	c.calls++
+	return c.fakeEmbedder.Embed(ctx, texts)
+}
+
+type fakeWarm struct {
+	err   error
+	calls int
+}
+
+func (f *fakeWarm) warm(context.Context) error {
+	f.calls++
+	return f.err
+}
+
+// Both models must be resident before the welcome, or the first question
+// still pays a cold load on whichever was skipped.
+func TestWarmupWarmsEmbedderAndModelOnce(t *testing.T) {
+	emb := &countingEmbedder{}
+	model := &fakeWarm{}
+	r := &RetrievingResponder{Embedder: emb, Warm: model}
+
+	for range 2 {
+		if err := r.Warmup(context.Background()); err != nil {
+			t.Fatalf("Warmup() error = %v, want nil", err)
+		}
+	}
+	if emb.calls != 1 || model.calls != 1 {
+		t.Errorf("embed, model calls = %d, %d; want 1, 1 (second Warmup served from cache)", emb.calls, model.calls)
+	}
+}
+
+func TestWarmupFailsWhenEitherSideFails(t *testing.T) {
+	cases := map[string]*RetrievingResponder{
+		"embedder": {Embedder: fakeEmbedder{err: errors.New("embed down")}, Warm: &fakeWarm{}},
+		"model":    {Embedder: fakeEmbedder{}, Warm: &fakeWarm{err: errors.New("model down")}},
+	}
+	for name, r := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := r.Warmup(context.Background()); err == nil {
+				t.Error("Warmup() error = nil, want the failure")
+			}
+		})
+	}
+}
