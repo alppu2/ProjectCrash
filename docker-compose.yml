@@ -1,38 +1,40 @@
 services:
-  order-service:
-    build:
-      context: .
-      dockerfile: order-service/Dockerfile
-    env_file:
-      - order-service/.env
-    networks:
-      - micro-network
-    depends_on:
-      mongodb:
-        condition: service_started
-      rabbitmq:
-        condition: service_healthy
-    develop:
-      watch:
-        - action: rebuild
-          path: ./order-service
-        - action: rebuild
-          path: ./orders
+  # Parked: the order/inventory demo is off the frontend. Uncomment this block
+  # (and the matching lines under envoy.depends_on and volumes) to restore it.
+  # order-service:
+  #   build:
+  #     context: .
+  #     dockerfile: order-service/Dockerfile
+  #   env_file:
+      # - order-service/.env
+  #   networks:
+  #     - micro-network
+  #   depends_on:
+  #     mongodb:
+  #       condition: service_started
+  #     rabbitmq:
+  #       condition: service_healthy
+  #   develop:
+  #     watch:
+  #       - action: rebuild
+  #         path: ./order-service
+  #       - action: rebuild
+  #         path: ./orders
 
-  inventory-service:
-    build:
-      context: .
-      dockerfile: inventory-service/Dockerfile
-    container_name: inventory-service
-    env_file:
-      - inventory-service/.env
-    ports:
-      - "9092:9091"
-    networks:
-      - micro-network
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
+  # inventory-service:
+  #   build:
+  #     context: .
+  #     dockerfile: inventory-service/Dockerfile
+  #   container_name: inventory-service
+  #   env_file:
+  #     - inventory-service/.env
+  #   ports:
+  #     - "9092:9091"
+  #   networks:
+  #     - micro-network
+  #   depends_on:
+  #     rabbitmq:
+  #       condition: service_healthy
 
   chat-service:
     build:
@@ -173,32 +175,33 @@ services:
       qdrant:
         condition: service_healthy
 
-  mongodb:
-    image: mongo:latest
-    container_name: mongodb
-    ports:
-      - "27017:27017"
-    networks:
-      - micro-network
-    volumes:
-      - mongo-data:/data/db
+  # Parked with order-service above: only the order/inventory path used these.
+  # mongodb:
+  #   image: mongo:latest
+  #   container_name: mongodb
+  #   ports:
+  #     - "27017:27017"
+  #   networks:
+  #     - micro-network
+  #   volumes:
+  #     - mongo-data:/data/db
 
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    container_name: rabbitmq
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-      - "15692:15692"
-    volumes:
-      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
-    networks:
-      - micro-network
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+  # rabbitmq:
+  #   image: rabbitmq:3-management-alpine
+  #   container_name: rabbitmq
+  #   ports:
+  #     - "5672:5672"
+  #     - "15672:15672"
+  #     - "15692:15692"
+  #   volumes:
+  #     - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+  #   networks:
+  #     - micro-network
+  #   healthcheck:
+  #     test: ["CMD", "rabbitmq-diagnostics", "ping"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
 
   prometheus:
     image: prom/prometheus:latest
@@ -275,7 +278,7 @@ services:
     networks:
       - micro-network
     depends_on:
-      - order-service
+      # - order-service
       - chat-service
 
 networks:
@@ -283,6 +286,6 @@ networks:
     driver: bridge
 
 volumes:
-  mongo-data:
+  # mongo-data:
   ollama-models:
   qdrant-storage:
