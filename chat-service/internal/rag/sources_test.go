@@ -41,6 +41,7 @@ func TestWalkSelectsAllowedRootsAndExtensions(t *testing.T) {
 		"frontend/src/api.ts":                "source",
 		"proto/chat.proto":                   "source",
 		"docs/superpowers/specs/a-design.md": "docs",
+		"docs/roadmap.md":                    "docs",
 		"CLAUDE.md":                          "docs",
 		"README.md":                          "docs",
 	}
@@ -68,7 +69,7 @@ func TestWalkSkipsGeneratedAndTests(t *testing.T) {
 			"frontend/node_modules/pkg/index.ts",
 			"chat-service/chat_test.go",
 			"frontend/src/components/chat/useChatStream.test.ts",
-			"docs/scalability-learning-plan.md":
+			"docs/notes.md":
 			t.Errorf("Walk() selected %q, which must be skipped", s.Path)
 		}
 	}
@@ -156,7 +157,8 @@ func fixtureTree(t *testing.T) string {
 		"frontend/node_modules/pkg/index.ts",
 		"proto/chat.proto",
 		"docs/superpowers/specs/a-design.md",
-		"docs/scalability-learning-plan.md",
+		"docs/roadmap.md",
+		"docs/notes.md",
 		"CLAUDE.md",
 		"README.md",
 		"secrets.txt",

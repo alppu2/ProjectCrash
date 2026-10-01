@@ -31,6 +31,7 @@ var allowedRoots = []struct {
 	{"inventory-service", "source"},
 	{"frontend/src", "source"},
 	{"docs/superpowers", "docs"},
+	{"docs/roadmap.md", "docs"},
 	{"CLAUDE.md", "docs"},
 	{"README.md", "docs"},
 }
