@@ -85,4 +85,30 @@ describe('ChatPanel', () => {
     await waitFor(() => expect(textbox().disabled).toBe(false));
     expect(mockWarmup).toHaveBeenCalledTimes(2);
   });
+
+  // Retry unmounts the focused button; without this a keyboard user is
+  // dropped to the page body when the chat comes back.
+  it('returns focus to the input once a retry succeeds', async () => {
+    mockWarmup.mockRejectedValueOnce(new Error('the assistant is unavailable'));
+    mockWarmup.mockResolvedValue(new WarmupResponse());
+
+    render(<ChatPanel />);
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    retry.focus();
+    fireEvent.click(retry);
+
+    await waitFor(() => expect(document.activeElement).toBe(textbox()));
+  });
+
+  // Screen-reader users cannot see the chat become usable or go offline.
+  it('announces warming as a status and offline as an alert', async () => {
+    mockWarmup.mockRejectedValue(new Error('the assistant is unavailable'));
+
+    render(<ChatPanel />);
+
+    expect(screen.getByRole('status').textContent).toBe(
+      'Assistant is warming up…'
+    );
+    expect((await screen.findByRole('alert')).textContent).toContain('offline');
+  });
 });

@@ -107,7 +107,7 @@ func (s *chatServer) Warmup(ctx context.Context, _ *chatpb.WarmupRequest) (*chat
 		log := obs.LogWithTrace(ctx, slog.Default())
 		if outcome == "cancelled" {
 			log.Info("warmup abandoned", "error", err)
-			return nil, status.FromContextError(err).Err()
+			return nil, status.Error(codes.Canceled, "warmup cancelled")
 		}
 		// Provider error text can carry account detail; it stays in the log.
 		log.Warn("warmup failed", "error", err)

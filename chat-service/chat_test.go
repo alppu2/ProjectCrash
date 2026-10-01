@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -406,5 +407,22 @@ func TestWarmupCancelledIsNotAnError(t *testing.T) {
 	}
 	if got := counterValue(chatWarmupsTotal.WithLabelValues("error")); got != errBefore {
 		t.Errorf("error count = %v, want unchanged %v", got, errBefore)
+	}
+}
+
+// ClassifyOutcome also reads a wrapped Canceled as a hangup, so this branch
+// must not build its message from err either.
+func TestWarmupCancelledHidesErrorText(t *testing.T) {
+	srv := &chatServer{
+		responder: &responder.EchoResponder{},
+		warmer:    fakeWarmer{err: fmt.Errorf("provider said gsk_secret: %w", context.Canceled)},
+	}
+
+	_, err := srv.Warmup(context.Background(), &chatpb.WarmupRequest{})
+	if status.Code(err) != codes.Canceled {
+		t.Fatalf("code = %v, want Canceled", status.Code(err))
+	}
+	if strings.Contains(err.Error(), "gsk_secret") {
+		t.Errorf("error %q leaks provider detail", err)
 	}
 }

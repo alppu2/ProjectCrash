@@ -22,6 +22,7 @@ function ChatPanel() {
   const listRef = useRef<HTMLOListElement>(null);
   const pinnedRef = useRef(true);
   const wasStreamingRef = useRef(false);
+  const retriedRef = useRef(false);
 
   // Follow new deltas, unless the user has scrolled up to read back.
   useEffect(() => {
@@ -36,6 +37,20 @@ function ChatPanel() {
     if (wasStreamingRef.current && !streaming) inputRef.current?.focus();
     wasStreamingRef.current = streaming;
   }, [streaming]);
+
+  // Retry unmounts its own focused button the same way; refocus only after a
+  // retry, never on the first warmup.
+  useEffect(() => {
+    if (status === 'ready' && retriedRef.current) {
+      retriedRef.current = false;
+      inputRef.current?.focus();
+    }
+  }, [status]);
+
+  function handleRetry() {
+    retriedRef.current = true;
+    retry();
+  }
 
   function handleScroll() {
     const el = listRef.current;
@@ -63,7 +78,9 @@ function ChatPanel() {
 
       <ol className="chat-messages" ref={listRef} onScroll={handleScroll}>
         {status === 'warming' && (
-          <li className="chat-status">{PLACEHOLDER.warming}</li>
+          <li className="chat-status">
+            <span role="status">{PLACEHOLDER.warming}</span>
+          </li>
         )}
         {welcome && <li className="chat-assistant">{welcome}</li>}
         {messages.map((m, i) => (
@@ -80,9 +97,9 @@ function ChatPanel() {
       </ol>
 
       {status === 'unavailable' && (
-        <p className="chat-error">
+        <p className="chat-error" role="alert">
           The assistant is offline right now.{' '}
-          <button type="button" onClick={retry}>
+          <button type="button" onClick={handleRetry}>
             Retry
           </button>
         </p>
