@@ -4,31 +4,37 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Aleksi Valta's engineering portfolio, headed for a public domain: three Go microservices behind an Envoy proxy, a React/TypeScript frontend speaking gRPC-Web, and a full observability stack (Prometheus, Loki, Tempo, Grafana). The streaming chat panel is becoming an assistant that answers questions about his background — the infrastructure beneath it is both the subject matter and the demonstration.
+Aleksi Valta's engineering portfolio, headed for a public domain: Go microservices behind an Envoy proxy, a React/TypeScript frontend speaking gRPC-Web, and a full observability stack (Prometheus, Loki, Tempo, Grafana). The frontend is a single streaming chat: an assistant that answers questions about his background, grounded in retrieved passages — the infrastructure beneath it is both the subject matter and the demonstration.
 
-This means anything user-visible is portfolio surface: copy, error states, dashboards, and the chat's answers are read by people evaluating the work, not just by its author. Roadmap and rationale live in `docs/scalability-learning-plan.md` (untracked, local only); per-feature design docs are in `docs/superpowers/specs/` and `docs/superpowers/plans/` and are historical records of decisions — don't retro-edit them to match later framing.
+This means anything user-visible is portfolio surface: copy, error states, dashboards, and the chat's answers are read by people evaluating the work, not just by its author. Status, roadmap and rationale live in `docs/roadmap.md` — keep status there, not here; this file holds what changes rarely. Per-feature design docs are in `docs/superpowers/specs/` and `docs/superpowers/plans/` and are historical records of decisions — don't retro-edit them to match later framing.
+
+**Parked:** `order-service`, `inventory-service`, MongoDB and RabbitMQ are commented out of `docker-compose.yml`. Their code, Envoy route and scrape jobs stay, and the order/async sections below describe them as they work when restored.
 
 ## Commands
 
 Each service needs a `.env` before compose will start it — `docker compose` uses `env_file`, not defaults:
 
 ```bash
-cp order-service/.env.example order-service/.env      # same for chat-service, inventory-service
+cp chat-service/.env.example chat-service/.env        # order/inventory-service too, when restored
 ```
 
 Stack:
 
 ```bash
-docker compose up --build
-docker compose up --build --scale order-service=3      # order-service is the horizontally scaled one
-docker compose watch                                   # rebuilds order-service on source change
+docker compose up --build                              # RESPONDER=echo: no model, no GPU
+docker compose --profile llm up --build -d             # + ollama, qdrant; needs RESPONDER=llm
+docker compose run --rm ingest                         # build/refresh the retrieval index; --full re-embeds all
 docker compose logs -f chat-service
 ```
+
+With `RESPONDER=llm`, chat-service exits at startup until the model and a non-empty index are reachable, and `restart: on-failure` brings it up once they are. Without `--profile llm` that is a permanent restart loop.
+
+When the order path is restored: `--scale order-service=3` scales it, and `docker compose watch` rebuilds it on source change.
 
 Go services (each directory is its own module — `cd` in first, there is no workspace):
 
 ```bash
-cd order-service && go build ./... && go test ./...
+cd chat-service && go build ./... && go test ./...
 go test -run TestValidateHistory ./...                  # single test
 go vet ./...
 ```
@@ -46,7 +52,7 @@ npm run format     # prettier --write src/
 `npm run format:check` fails on files this repo has never formatted — check
 whether a warning predates your change before reformatting anything.
 
-Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin), Prometheus `:9090`, RabbitMQ management `:15672`, Tempo `:3200`, Loki `:3100`, MongoDB `:27017`, inventory-service metrics `:9092`.
+Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin), Prometheus `:9090`, Tempo `:3200`, Loki `:3100`. Ollama and Qdrant publish no host port (unauthenticated APIs); use `docker compose exec`. Restoring the order path adds RabbitMQ management `:15672`, MongoDB `:27017` and inventory-service metrics `:9092`.
 
 ## Protobuf codegen
 
@@ -65,7 +71,11 @@ Changing a proto means regenerating both sides and committing the output.
 
 **Async path.** `order-service.SendPacket` writes to MongoDB, then publishes JSON to the `packets` queue; `inventory-service` consumes it. The two services agree on the message shape by convention only — `order-service` marshals an inline map, `inventory-service` unmarshals into its own `DataPacket` struct. Changing one requires changing the other.
 
-**Chat streaming.** `chat.proto` defines one server-streaming RPC emitting `ChatChunk` frames (`text_delta`… then a terminal `done`). The server is stateless: the client sends full conversation history each turn (`useChatStream.ts` caps it at `MAX_HISTORY`, `chat.go` enforces hard server-side limits since the endpoint is unauthenticated). `Responder` in `chat-service/internal/responder/responder.go` is the seam for the real LLM — `EchoResponder` is a zero-cost stub that replays the last user message word by word. Swapping in a Claude-backed responder should not touch the RPC handler.
+**Chat streaming.** `chat.proto` defines one server-streaming RPC emitting `ChatChunk` frames (`text_delta`… then a terminal `done`). The server is stateless: the client sends full conversation history each turn (`useChatStream.ts` caps it at `MAX_HISTORY`, `chat.go` enforces hard server-side limits since the endpoint is unauthenticated). `Responder` in `chat-service/internal/responder/responder.go` is the provider seam, chosen by `RESPONDER` in `responder.New`: `echo` (`EchoResponder`, zero-cost, replays the last user message) or `llm` (`RetrievingResponder` wrapping `OpenAIResponder`, for any OpenAI-compatible provider — Ollama locally, a hosted endpoint by changing `LLM_BASE_URL`/`LLM_API_KEY`). A new provider should not touch the RPC handler.
+
+**Retrieval.** `RetrievingResponder` condenses follow-ups into a standalone question, embeds it, searches Qdrant with a reserved background floor, and grounds the turn; below `RETRIEVAL_MIN_SCORE` nothing reaches the model. The index is built by `chat-service/cmd/ingest` (the `ingest` compose service) over the repo itself, incremental by content hash. The collection name is derived from the embedding model and its dimension, so changing `EMBED_MODEL` means re-ingesting.
+
+**`internal/rag/sources.go` is the security boundary.** Its allowlist decides what text unauthenticated visitors can get quoted back. Add paths deliberately, never widen to a denylist, and keep `TestWalkNeverSelectsSecrets` passing; personal material goes in gitignored `corpus/`.
 
 ## Cross-cutting conventions
 
@@ -73,11 +83,11 @@ Changing a proto means regenerating both sides and committing the output.
 - **Every service serves Prometheus metrics on `:9091`** from a goroutine started before anything else in `main`, and logs JSON via `slog.NewJSONHandler` to stdout (Promtail ships it to Loki).
 - **Both `docker_sd_configs` regexes must survive a compose-generated name.** `prometheus.yml` and `promtail-config.yml` discover containers the same way, and relabel regexes are *fully anchored* — a bare `/(order-service)` never matches `/<project>-order-service-1`, which is what `order-service` is called because it has no `container_name`. Match with `.*` on both sides, and add the service to both files. Getting this wrong drops that service's logs or metrics silently: nothing errors, the target just never appears.
 - **Trace context crosses gRPC via `otelgrpc` stats handlers, and crosses RabbitMQ via `amqpHeaderCarrier`** (`amqp_carrier.go`) — inject into `amqp.Table` headers on publish, extract on consume. A new async hop must do both or the trace breaks.
-- **Degrade, don't die.** Tracer init failure logs a warning and continues untraced; a RabbitMQ publish failure still returns success because the packet is already durable in MongoDB. `order-service.ensureChannel` reconnects lazily — it tries a new channel on the existing connection before a full redial, and callers must use the returned channel rather than re-reading `s.amqpChannel`.
+- **Degrade, don't die — except on grounding.** Optional dependencies degrade; grounding is not optional. chat-service in llm mode refuses to start without its index, and a per-turn retrieval failure swaps in `unavailableEnvelope`, which has the model say it cannot look anything up rather than answer from memory about a real person; an unknown config value is a startup error, never a silent fallback to echo. Tracer init failure logs a warning and continues untraced; a RabbitMQ publish failure still returns success because the packet is already durable in MongoDB. `order-service.ensureChannel` reconnects lazily — it tries a new channel on the existing connection before a full redial, and callers must use the returned channel rather than re-reading `s.amqpChannel`.
 - **Metric accounting is centralized per handler.** `chatServer.Chat` records exactly one `chatStreamsTotal` increment and one duration observation in a single deferred func, with `outcome` only ever downgraded; don't add a second Inc/Observe pair on a new exit path.
 - **A collector lives with the code that moves it.** chat-service's stream-level counters are in the root `metrics.go`; everything the responder stack observes (provider, retrieval, embed, condense) is in `internal/responder/metrics.go`. Both register on promauto's default registry, so `/metrics` is unaffected by which file a collector sits in.
 - **Client disconnects are not errors.** `responder.ClassifyOutcome` treats `context.Canceled` and gRPC `codes.Canceled` alike, because a hung-up browser surfaces as either depending on where it is noticed.
-- **Frontend transport is shared.** `frontend/src/api.ts` builds one `createGrpcWebTransport` pointed at Envoy and one promise client per service; auth interceptors, retries, and a env-driven baseUrl belong there, not in components.
+- **Frontend transport is shared.** `frontend/src/api.ts` builds one `createGrpcWebTransport` pointed at Envoy and one promise client per service (today only `chatClient`); auth interceptors, retries, and a env-driven baseUrl belong there, not in components.
 
 ## Comments
 
