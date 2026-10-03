@@ -1,111 +1,94 @@
+@import 'tailwindcss';
+
+/* Semantic tokens as plain variables so non-Tailwind consumers (charts take
+   colours as props) can read the same palette and follow dark mode. */
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow:
-    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
-
-  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --mono: ui-monospace, Consolas, monospace;
-
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
-  color-scheme: light dark;
-  color: var(--text);
-  background: var(--bg);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
+  --bg: var(--color-white);
+  --surface: var(--color-zinc-50);
+  --border: var(--color-zinc-200);
+  --fg: var(--color-zinc-900);
+  --muted: var(--color-zinc-500);
+  --accent: var(--color-emerald-600);
+  --accent-fg: var(--color-white);
+  --danger: var(--color-red-700);
+  --danger-bg: var(--color-red-50);
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow:
-      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
-  }
-
-  #social .button-icon {
-    filter: invert(1) brightness(2);
+    --bg: var(--color-zinc-950);
+    --surface: var(--color-zinc-900);
+    --border: var(--color-zinc-800);
+    --fg: var(--color-zinc-100);
+    --muted: var(--color-zinc-400);
+    --accent: var(--color-emerald-500);
+    --accent-fg: var(--color-zinc-950);
+    --danger: var(--color-red-300);
+    --danger-bg: color-mix(in oklab, var(--color-red-500) 12%, transparent);
   }
 }
 
-#root {
-  width: 1126px;
-  max-width: 100%;
-  margin: 0 auto;
-  text-align: center;
-  border-inline: 1px solid var(--border);
-  min-height: 100svh;
-  display: flex;
-  flex-direction: column;
-  box-sizing: border-box;
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-border: var(--border);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
 }
 
-body {
-  margin: 0;
-}
+@theme {
+  --animate-typing: typing 1.2s ease-in-out infinite;
 
-h1,
-h2 {
-  font-family: var(--heading);
-  font-weight: 500;
-  color: var(--text-h);
-}
-
-h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
+  @keyframes typing {
+    0%,
+    60%,
+    100% {
+      opacity: 0.35;
+      transform: translateY(0);
+    }
+    30% {
+      opacity: 1;
+      transform: translateY(-3px);
+    }
   }
 }
-h2 {
-  font-size: 24px;
-  line-height: 118%;
-  letter-spacing: -0.24px;
-  margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
+
+/* Thumb drawn only while ChatPanel flags the list as scrolling. The track
+   stays reserved, so showing it never reflows the messages. */
+@utility scrollbar-autohide {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+
+  &[data-scrolling] {
+    scrollbar-color: color-mix(in oklab, var(--muted) 60%, transparent)
+      transparent;
+  }
+
+  /* Safari has no scrollbar-color. */
+  @supports not (scrollbar-color: auto) {
+    &::-webkit-scrollbar {
+      width: 8px;
+    }
+    &::-webkit-scrollbar-thumb {
+      border-radius: 4px;
+      background: transparent;
+    }
+    &[data-scrolling]::-webkit-scrollbar-thumb {
+      background: color-mix(in oklab, var(--muted) 60%, transparent);
+    }
   }
 }
-p {
-  margin: 0;
-}
 
-code,
-.counter {
-  font-family: var(--mono);
-  display: inline-flex;
-  border-radius: 4px;
-  color: var(--text-h);
-}
+@layer base {
+  :root {
+    color-scheme: light dark;
+  }
 
-code {
-  font-size: 15px;
-  line-height: 135%;
-  padding: 4px 8px;
-  background: var(--code-bg);
+  body {
+    @apply bg-bg text-fg antialiased;
+  }
 }
