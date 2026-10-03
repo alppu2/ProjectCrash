@@ -5,7 +5,7 @@ product integration, and the portfolio that shows them. This file tracks what
 is done, what is next, and why the order is what it is. Per-feature decisions
 live in `docs/superpowers/specs/`.
 
-*Last updated: 2026-10-01*
+*Last updated: 2026-10-03*
 
 ## Status at a glance
 
@@ -15,7 +15,7 @@ live in `docs/superpowers/specs/`.
 | 2 | Horizontal scaling + load testing | Done; order/inventory path now parked |
 | 3 | LLM feature in the product | Done, as a portfolio assistant |
 | 4 | RAG over the portfolio | In progress |
-| 5 | Going public | Not started |
+| 5 | Going public | In progress |
 | 6 | Resilience patterns | Not started |
 | 7 | CI/CD | Not started |
 | 8 | Kubernetes | Not started |
@@ -85,6 +85,8 @@ Remaining:
 ## Next
 
 ### 5. Going public
+- Done: public-facing frontend restyled with Tailwind v4: full-height chat,
+  header with name, role and contact links, light and dark themes
 - Hosted OpenAI-compatible provider in place of Ollama, with a spend cap, a
   `max_tokens` ceiling and rate limiting first
 - TLS and a registered domain

@@ -87,6 +87,7 @@ Changing a proto means regenerating both sides and committing the output.
 - **Metric accounting is centralized per handler.** `chatServer.Chat` records exactly one `chatStreamsTotal` increment and one duration observation in a single deferred func, with `outcome` only ever downgraded; don't add a second Inc/Observe pair on a new exit path.
 - **A collector lives with the code that moves it.** chat-service's stream-level counters are in the root `metrics.go`; everything the responder stack observes (provider, retrieval, embed, condense) is in `internal/responder/metrics.go`. Both register on promauto's default registry, so `/metrics` is unaffected by which file a collector sits in.
 - **Client disconnects are not errors.** `responder.ClassifyOutcome` treats `context.Canceled` and gRPC `codes.Canceled` alike, because a hung-up browser surfaces as either depending on where it is noticed.
+- **Frontend styling is Tailwind v4 over semantic tokens.** `src/index.css` defines `--bg`, `--fg`, `--accent` and friends as plain CSS variables, swapped for dark mode and exposed to Tailwind via `@theme inline` (`bg-surface`, `text-muted`…). Use those, not raw palette classes, and read the same variables when a chart library takes colours as props.
 - **Frontend transport is shared.** `frontend/src/api.ts` builds one `createGrpcWebTransport` pointed at Envoy and one promise client per service (today only `chatClient`); auth interceptors, retries, and a env-driven baseUrl belong there, not in components.
 
 ## Comments
