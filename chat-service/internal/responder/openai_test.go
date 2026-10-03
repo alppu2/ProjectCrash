@@ -679,3 +679,122 @@ func TestOpenAIResponderWarmSurfacesHTTPError(t *testing.T) {
 		t.Errorf("warm() error = %v, want one naming HTTP 401", err)
 	}
 }
+
+// completionRequest is the non-streaming body complete sends.
+type completionRequest struct {
+	Model     string          `json:"model"`
+	Stream    bool            `json:"stream"`
+	MaxTokens int             `json:"max_tokens"`
+	Messages  []openAIMessage `json:"messages"`
+}
+
+// completionServer answers one non-streaming completion with content and
+// records the request it got.
+func completionServer(t *testing.T, content string, got *completionRequest) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+			t.Errorf("decoding body: %v", err)
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": content}}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// The rewrite is what retrieval searches with. A lost instruction or a
+// dropped history turn leaves "what about the other one?" unresolved, and
+// the search returns passages about nothing in particular.
+func TestOpenAIResponderCondenseRequestShape(t *testing.T) {
+	var got completionRequest
+	srv := completionServer(t, "  What did Aleksi build with Go?\n", &got)
+
+	o := &OpenAIResponder{BaseURL: srv.URL, Model: "qwen3", System: "grounding", Client: srv.Client()}
+	out, err := o.condense(context.Background(), []*chatpb.Message{
+		{Role: chatpb.Role_ROLE_USER, Content: "what languages does he use?"},
+		{Role: chatpb.Role_ROLE_ASSISTANT, Content: "Go and TypeScript."},
+		{Role: chatpb.Role_ROLE_USER, Content: "what did he build with the first?"},
+	})
+	if err != nil {
+		t.Fatalf("condense() error = %v, want nil", err)
+	}
+	if out != "What did Aleksi build with Go?" {
+		t.Errorf("condense() = %q, want the reply trimmed", out)
+	}
+
+	if got.Model != "qwen3" || got.Stream || got.MaxTokens != condenseMaxTokens {
+		t.Errorf("request = model %q, stream %v, max_tokens %d; want qwen3, false, %d",
+			got.Model, got.Stream, got.MaxTokens, condenseMaxTokens)
+	}
+	// The turn's grounding prompt must not leak in: condense runs before
+	// retrieval and is told only to rewrite.
+	want := []openAIMessage{
+		{Role: "system", Content: condensePrompt},
+		{Role: "user", Content: "what languages does he use?"},
+		{Role: "assistant", Content: "Go and TypeScript."},
+		{Role: "user", Content: "what did he build with the first?"},
+	}
+	if !slices.Equal(got.Messages, want) {
+		t.Errorf("messages = %+v, want %+v", got.Messages, want)
+	}
+}
+
+// An empty rewrite would embed "" and search with it, grounding the turn in
+// whatever happens to sit nearest the origin.
+func TestOpenAIResponderCondenseRejectsEmptyRewrite(t *testing.T) {
+	for _, content := range []string{"", " \n\t"} {
+		var got completionRequest
+		srv := completionServer(t, content, &got)
+		o := &OpenAIResponder{BaseURL: srv.URL, Model: "m", Client: srv.Client()}
+		out, err := o.condense(context.Background(), []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hi"}})
+		if err == nil {
+			t.Errorf("condense() with reply %q = %q, nil; want an error", content, out)
+		}
+	}
+}
+
+func TestOpenAIResponderCondenseSurfacesHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "overloaded", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+
+	o := &OpenAIResponder{BaseURL: srv.URL, Model: "m", Client: srv.Client()}
+	_, err := o.condense(context.Background(), []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hi"}})
+	if err == nil || !strings.Contains(err.Error(), "condense returned HTTP 503") {
+		t.Errorf("condense() error = %v, want one naming condense and HTTP 503", err)
+	}
+}
+
+// One OpenAIResponder serves every concurrent turn. If withSystem wrote to
+// the receiver, one visitor's retrieved passages would ground another's reply.
+func TestOpenAIResponderWithSystemLeavesReceiverUntouched(t *testing.T) {
+	var got struct {
+		Messages []openAIMessage `json:"messages"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decoding body: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, frameDone+"\n\n")
+	}))
+	t.Cleanup(srv.Close)
+
+	base := newTestLLM(srv.URL)
+	base.System = "base prompt"
+	bound := base.withSystem("turn prompt")
+
+	if base.System != "base prompt" {
+		t.Fatalf("receiver System = %q after withSystem, want it unchanged", base.System)
+	}
+	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hi"}}}
+	if _, err := bound.Stream(context.Background(), req, func(string) error { return nil }); err != nil {
+		t.Fatalf("Stream() error = %v, want nil", err)
+	}
+	if len(got.Messages) == 0 || got.Messages[0] != (openAIMessage{Role: "system", Content: "turn prompt"}) {
+		t.Errorf("first message = %+v, want the turn's system prompt", got.Messages)
+	}
+}

@@ -74,6 +74,58 @@ describe('ChatPanel', () => {
     ]);
   });
 
+  // Retrieval and condensing run before the first token, so a turn can sit
+  // silent for seconds; without the indicator it reads as a dead send.
+  it('shows the assistant typing until the first text arrives', async () => {
+    mockWarmup.mockResolvedValue(new WarmupResponse());
+    let release!: () => void;
+    const firstToken = new Promise<void>((resolve) => (release = resolve));
+    mockChat.mockImplementation(() =>
+      (async function* () {
+        await firstToken;
+        yield new ChatChunk({ event: { case: 'textDelta', value: 'hello' } });
+      })()
+    );
+
+    render(<ChatPanel />);
+    await screen.findByText(/^Hi,/);
+    fireEvent.change(textbox(), { target: { value: 'who is he?' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect((await screen.findByRole('status')).textContent).toBe(
+      'Assistant is typing'
+    );
+
+    release();
+
+    expect(await screen.findByText('hello')).toBeTruthy();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
+  // The scrollbar is drawn only while this attribute is set; if it stuck, the
+  // bar would never hide again, and if it never set, it would never show.
+  it('marks the list as scrolling until scrolling stops', () => {
+    vi.useFakeTimers();
+    try {
+      mockWarmup.mockReturnValue(new Promise<WarmupResponse>(() => {}));
+      render(<ChatPanel />);
+      const list = screen.getByRole('list');
+
+      fireEvent.scroll(list);
+      expect(list.hasAttribute('data-scrolling')).toBe(true);
+
+      vi.advanceTimersByTime(500);
+      fireEvent.scroll(list);
+      vi.advanceTimersByTime(900);
+      expect(list.hasAttribute('data-scrolling')).toBe(true);
+
+      vi.advanceTimersByTime(200);
+      expect(list.hasAttribute('data-scrolling')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('offers a retry when the assistant is unavailable', async () => {
     mockWarmup.mockRejectedValueOnce(new Error('the assistant is unavailable'));
     mockWarmup.mockResolvedValue(new WarmupResponse());
