@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import useChatStream from './useChatStream';
+import useWarmup, { type WarmupStatus } from './useWarmup';
 import { Role } from '../../gen/chat_pb';
 import './ChatPanel.css';
 
@@ -7,19 +8,27 @@ import './ChatPanel.css';
 // scroll heights mean an exact comparison never holds.
 const PIN_SLACK_PX = 24;
 
+const PLACEHOLDER: Record<WarmupStatus, string> = {
+  warming: 'Assistant is warming up…',
+  ready: 'Say something',
+  unavailable: 'Assistant is offline',
+};
+
 function ChatPanel() {
   const { messages, streaming, error, send, stop } = useChatStream();
+  const { status, welcome, retry } = useWarmup();
   const [input, setInput] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLOListElement>(null);
   const pinnedRef = useRef(true);
   const wasStreamingRef = useRef(false);
+  const retriedRef = useRef(false);
 
   // Follow new deltas, unless the user has scrolled up to read back.
   useEffect(() => {
     const el = listRef.current;
     if (el && pinnedRef.current) el.scrollTop = el.scrollHeight;
-  }, [messages]);
+  }, [messages, welcome]);
 
   // Clicking Stop unmounts the button that has focus, dropping it to the
   // body. Only refocus on the streaming -> idle edge, so the panel does not
@@ -28,6 +37,20 @@ function ChatPanel() {
     if (wasStreamingRef.current && !streaming) inputRef.current?.focus();
     wasStreamingRef.current = streaming;
   }, [streaming]);
+
+  // Retry unmounts its own focused button the same way; refocus only after a
+  // retry, never on the first warmup.
+  useEffect(() => {
+    if (status === 'ready' && retriedRef.current) {
+      retriedRef.current = false;
+      inputRef.current?.focus();
+    }
+  }, [status]);
+
+  function handleRetry() {
+    retriedRef.current = true;
+    retry();
+  }
 
   function handleScroll() {
     const el = listRef.current;
@@ -54,6 +77,12 @@ function ChatPanel() {
       <h1>Chat</h1>
 
       <ol className="chat-messages" ref={listRef} onScroll={handleScroll}>
+        {status === 'warming' && (
+          <li className="chat-status">
+            <span role="status">{PLACEHOLDER.warming}</span>
+          </li>
+        )}
+        {welcome && <li className="chat-assistant">{welcome}</li>}
         {messages.map((m, i) => (
           <li
             key={i}
@@ -67,6 +96,14 @@ function ChatPanel() {
         ))}
       </ol>
 
+      {status === 'unavailable' && (
+        <p className="chat-error" role="alert">
+          The assistant is offline right now.{' '}
+          <button type="button" onClick={handleRetry}>
+            Retry
+          </button>
+        </p>
+      )}
       {error && <p className="chat-error">{error}</p>}
 
       <form className="chat-form" onSubmit={handleSubmit}>
@@ -77,14 +114,15 @@ function ChatPanel() {
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Say something"
+          placeholder={PLACEHOLDER[status]}
+          disabled={status !== 'ready'}
         />
         {streaming ? (
           <button type="button" onClick={stop}>
             Stop
           </button>
         ) : (
-          <button type="submit" disabled={!input.trim()}>
+          <button type="submit" disabled={status !== 'ready' || !input.trim()}>
             Send
           </button>
         )}

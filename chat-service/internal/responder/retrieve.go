@@ -27,6 +27,10 @@ type condenser interface {
 	condense(ctx context.Context, msgs []*chatpb.Message) (string, error)
 }
 
+type warmer interface {
+	warm(ctx context.Context) error
+}
+
 // RetrievingResponder grounds each turn in retrieved passages, then delegates.
 // chatServer.Chat does not learn about Qdrant: this fills the same Responder
 // seam the echo stub does.
@@ -35,9 +39,12 @@ type RetrievingResponder struct {
 	Embedder  rag.Embedder
 	Store     searcher
 	Condenser condenser
+	Warm      warmer
 	TopK      int
 	MinScore  float32
 	Floor     int
+
+	cache warmCache
 }
 
 func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
@@ -51,6 +58,20 @@ func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatReques
 		system = unavailableEnvelope
 	}
 	return r.Inner.withSystem(system).Stream(ctx, req, emit)
+}
+
+// Warmup readies both models a turn needs. The probe text is irrelevant;
+// embedding anything loads the embedder.
+func (r *RetrievingResponder) Warmup(ctx context.Context) error {
+	return r.cache.do(ctx, func(ctx context.Context) error {
+		if _, err := r.Embedder.Embed(ctx, []string{"warmup"}); err != nil {
+			return fmt.Errorf("warming embedder: %w", err)
+		}
+		if err := r.Warm.warm(ctx); err != nil {
+			return fmt.Errorf("warming model: %w", err)
+		}
+		return nil
+	})
 }
 
 // ground builds one turn's system prompt. Every error path here is soft — the

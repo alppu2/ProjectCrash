@@ -19,7 +19,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	ChatService_Chat_FullMethodName = "/chat.v1.ChatService/Chat"
+	ChatService_Chat_FullMethodName   = "/chat.v1.ChatService/Chat"
+	ChatService_Warmup_FullMethodName = "/chat.v1.ChatService/Warmup"
 )
 
 // ChatServiceClient is the client API for ChatService service.
@@ -28,6 +29,9 @@ const (
 type ChatServiceClient interface {
 	// One request, many responses: the server pushes ChatChunk frames until Done.
 	Chat(ctx context.Context, in *ChatRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ChatChunk], error)
+	// Readies the provider before the first turn. Cheap to repeat: the server
+	// shares one in-flight call and reuses a recent success.
+	Warmup(ctx context.Context, in *WarmupRequest, opts ...grpc.CallOption) (*WarmupResponse, error)
 }
 
 type chatServiceClient struct {
@@ -57,12 +61,25 @@ func (c *chatServiceClient) Chat(ctx context.Context, in *ChatRequest, opts ...g
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ChatService_ChatClient = grpc.ServerStreamingClient[ChatChunk]
 
+func (c *chatServiceClient) Warmup(ctx context.Context, in *WarmupRequest, opts ...grpc.CallOption) (*WarmupResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(WarmupResponse)
+	err := c.cc.Invoke(ctx, ChatService_Warmup_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ChatServiceServer is the server API for ChatService service.
 // All implementations must embed UnimplementedChatServiceServer
 // for forward compatibility.
 type ChatServiceServer interface {
 	// One request, many responses: the server pushes ChatChunk frames until Done.
 	Chat(*ChatRequest, grpc.ServerStreamingServer[ChatChunk]) error
+	// Readies the provider before the first turn. Cheap to repeat: the server
+	// shares one in-flight call and reuses a recent success.
+	Warmup(context.Context, *WarmupRequest) (*WarmupResponse, error)
 	mustEmbedUnimplementedChatServiceServer()
 }
 
@@ -75,6 +92,9 @@ type UnimplementedChatServiceServer struct{}
 
 func (UnimplementedChatServiceServer) Chat(*ChatRequest, grpc.ServerStreamingServer[ChatChunk]) error {
 	return status.Error(codes.Unimplemented, "method Chat not implemented")
+}
+func (UnimplementedChatServiceServer) Warmup(context.Context, *WarmupRequest) (*WarmupResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method Warmup not implemented")
 }
 func (UnimplementedChatServiceServer) mustEmbedUnimplementedChatServiceServer() {}
 func (UnimplementedChatServiceServer) testEmbeddedByValue()                     {}
@@ -108,13 +128,36 @@ func _ChatService_Chat_Handler(srv interface{}, stream grpc.ServerStream) error 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type ChatService_ChatServer = grpc.ServerStreamingServer[ChatChunk]
 
+func _ChatService_Warmup_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(WarmupRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ChatServiceServer).Warmup(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: ChatService_Warmup_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ChatServiceServer).Warmup(ctx, req.(*WarmupRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // ChatService_ServiceDesc is the grpc.ServiceDesc for ChatService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var ChatService_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "chat.v1.ChatService",
 	HandlerType: (*ChatServiceServer)(nil),
-	Methods:     []grpc.MethodDesc{},
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Warmup",
+			Handler:    _ChatService_Warmup_Handler,
+		},
+	},
 	Streams: []grpc.StreamDesc{
 		{
 			StreamName:    "Chat",

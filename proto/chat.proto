@@ -6,6 +6,9 @@ option go_package = "./chat";
 service ChatService {
   // One request, many responses: the server pushes ChatChunk frames until Done.
   rpc Chat(ChatRequest) returns (stream ChatChunk);
+  // Readies the provider before the first turn. Cheap to repeat: the server
+  // shares one in-flight call and reuses a recent success.
+  rpc Warmup(WarmupRequest) returns (WarmupResponse);
 }
 
 enum Role {
@@ -36,3 +39,7 @@ message Done {
   int32 input_tokens = 2;
   int32 output_tokens = 3;
 }
+
+// Empty for now; room for e.g. a model id without a new RPC.
+message WarmupRequest {}
+message WarmupResponse {}

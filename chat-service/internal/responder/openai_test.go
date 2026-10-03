@@ -635,3 +635,47 @@ func TestNewLLMClientTimeout(t *testing.T) {
 		t.Errorf("client.Timeout = %v, want 0 — a whole-request timeout would kill long generations", client.Timeout)
 	}
 }
+
+// One token through the same request shape condense uses, so any provider
+// that serves chat also serves warmup. An empty reply still counts as warm:
+// max_tokens 1 often yields only a stop.
+func TestOpenAIResponderWarmRequestShape(t *testing.T) {
+	var got struct {
+		Model     string `json:"model"`
+		Stream    bool   `json:"stream"`
+		MaxTokens int    `json:"max_tokens"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Errorf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decoding body: %v", err)
+		}
+		w.Write([]byte(`{"choices":[{"message":{"content":""}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	o := &OpenAIResponder{BaseURL: srv.URL, Model: "llama3.2:3b", Client: srv.Client()}
+	if err := o.warm(context.Background()); err != nil {
+		t.Fatalf("warm() error = %v, want nil", err)
+	}
+	if got.Model != "llama3.2:3b" || got.Stream || got.MaxTokens != 1 {
+		t.Errorf("request = %+v, want model llama3.2:3b, stream false, max_tokens 1", got)
+	}
+}
+
+// A bad key or missing model must fail warmup, so the page says unavailable
+// instead of welcoming visitors to a chat that cannot answer.
+func TestOpenAIResponderWarmSurfacesHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"invalid api key"}}`, http.StatusUnauthorized)
+	}))
+	t.Cleanup(srv.Close)
+
+	o := &OpenAIResponder{BaseURL: srv.URL, Model: "m", Client: srv.Client()}
+	err := o.warm(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "warmup returned HTTP 401") {
+		t.Errorf("warm() error = %v, want one naming HTTP 401", err)
+	}
+}

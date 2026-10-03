@@ -3,7 +3,7 @@
 /* eslint-disable */
 // @ts-nocheck
 
-import { ChatChunk, ChatRequest } from "./chat_pb.js";
+import { ChatChunk, ChatRequest, WarmupRequest, WarmupResponse } from "./chat_pb.js";
 import { MethodKind } from "@bufbuild/protobuf";
 
 /**
@@ -22,6 +22,18 @@ export const ChatService = {
       I: ChatRequest,
       O: ChatChunk,
       kind: MethodKind.ServerStreaming,
+    },
+    /**
+     * Readies the provider before the first turn. Cheap to repeat: the server
+     * shares one in-flight call and reuses a recent success.
+     *
+     * @generated from rpc chat.v1.ChatService.Warmup
+     */
+    warmup: {
+      name: "Warmup",
+      I: WarmupRequest,
+      O: WarmupResponse,
+      kind: MethodKind.Unary,
     },
   }
 } as const;

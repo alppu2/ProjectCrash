@@ -290,19 +290,40 @@ const condenseMaxTokens = 96
 // ahead of the first token, so its latency is measured separately.
 func (o *OpenAIResponder) condense(ctx context.Context, msgs []*chatpb.Message) (string, error) {
 	payload := append([]openAIMessage{{Role: "system", Content: condensePrompt}}, toOpenAIMessages(msgs)...)
+	out, err := o.complete(ctx, "condense", condenseMaxTokens, payload)
+	if err != nil {
+		return "", err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", fmt.Errorf("condense returned no content")
+	}
+	return out, nil
+}
+
+// warm loads the model on a local provider, and on a hosted one proves the
+// URL, key, model and quota. The one-token reply is discarded.
+func (o *OpenAIResponder) warm(ctx context.Context) error {
+	_, err := o.complete(ctx, "warmup", 1, []openAIMessage{{Role: "user", Content: "ping"}})
+	return err
+}
+
+// complete runs one non-streaming completion and returns the first choice's
+// content, which may be empty. op prefixes every error.
+func (o *OpenAIResponder) complete(ctx context.Context, op string, maxTokens int, msgs []openAIMessage) (string, error) {
 	body, err := json.Marshal(struct {
 		Model     string          `json:"model"`
 		Stream    bool            `json:"stream"`
 		MaxTokens int             `json:"max_tokens"`
 		Messages  []openAIMessage `json:"messages"`
-	}{Model: o.Model, Stream: false, MaxTokens: condenseMaxTokens, Messages: payload})
+	}{Model: o.Model, Stream: false, MaxTokens: maxTokens, Messages: msgs})
 	if err != nil {
-		return "", fmt.Errorf("encoding condense request: %w", err)
+		return "", fmt.Errorf("encoding %s request: %w", op, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("building condense request: %w", err)
+		return "", fmt.Errorf("building %s request: %w", op, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if o.APIKey != "" {
@@ -314,12 +335,12 @@ func (o *OpenAIResponder) condense(ctx context.Context, msgs []*chatpb.Message) 
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return "", ctxErr
 		}
-		return "", fmt.Errorf("condense request failed: %w", err)
+		return "", fmt.Errorf("%s request failed: %w", op, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("condense returned HTTP %d: %s", resp.StatusCode, readErrorBody(resp.Body))
+		return "", fmt.Errorf("%s returned HTTP %d: %s", op, resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var out struct {
@@ -330,10 +351,10 @@ func (o *OpenAIResponder) condense(ctx context.Context, msgs []*chatpb.Message) 
 		} `json:"choices"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", fmt.Errorf("decoding condense response: %w", err)
+		return "", fmt.Errorf("decoding %s response: %w", op, err)
 	}
-	if len(out.Choices) == 0 || strings.TrimSpace(out.Choices[0].Message.Content) == "" {
-		return "", fmt.Errorf("condense returned no content")
+	if len(out.Choices) == 0 {
+		return "", nil
 	}
-	return strings.TrimSpace(out.Choices[0].Message.Content), nil
+	return out.Choices[0].Message.Content, nil
 }

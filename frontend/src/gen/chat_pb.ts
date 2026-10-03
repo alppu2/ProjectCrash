@@ -217,3 +217,67 @@ export class Done extends Message$1<Done> {
   }
 }
 
+/**
+ * Empty for now; room for e.g. a model id without a new RPC.
+ *
+ * @generated from message chat.v1.WarmupRequest
+ */
+export class WarmupRequest extends Message$1<WarmupRequest> {
+  constructor(data?: PartialMessage<WarmupRequest>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "chat.v1.WarmupRequest";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): WarmupRequest {
+    return new WarmupRequest().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): WarmupRequest {
+    return new WarmupRequest().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): WarmupRequest {
+    return new WarmupRequest().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: WarmupRequest | PlainMessage<WarmupRequest> | undefined, b: WarmupRequest | PlainMessage<WarmupRequest> | undefined): boolean {
+    return proto3.util.equals(WarmupRequest, a, b);
+  }
+}
+
+/**
+ * @generated from message chat.v1.WarmupResponse
+ */
+export class WarmupResponse extends Message$1<WarmupResponse> {
+  constructor(data?: PartialMessage<WarmupResponse>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "chat.v1.WarmupResponse";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): WarmupResponse {
+    return new WarmupResponse().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): WarmupResponse {
+    return new WarmupResponse().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): WarmupResponse {
+    return new WarmupResponse().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: WarmupResponse | PlainMessage<WarmupResponse> | undefined, b: WarmupResponse | PlainMessage<WarmupResponse> | undefined): boolean {
+    return proto3.util.equals(WarmupResponse, a, b);
+  }
+}
+

@@ -177,6 +177,13 @@ func TestNewResponderConfiguresTheGroundedResponder(t *testing.T) {
 	if !ok {
 		t.Fatalf("Inner = %T, want *responder.OpenAIResponder", retriever.Inner)
 	}
+	// Warmup must load the same model the turns use, or the welcome lies.
+	if w, ok := retriever.Warm.(*responder.OpenAIResponder); !ok || w != o {
+		t.Errorf("Warm = %T, want the same *responder.OpenAIResponder as Inner", retriever.Warm)
+	}
+	if _, ok := r.(responder.Warmer); !ok {
+		t.Errorf("responder = %T, does not implement responder.Warmer", r)
+	}
 	// Trimmed, or request paths become //chat/completions.
 	if o.BaseURL != "https://api.groq.com/openai/v1" {
 		t.Errorf("BaseURL = %q, want %q", o.BaseURL, "https://api.groq.com/openai/v1")
