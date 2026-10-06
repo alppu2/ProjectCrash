@@ -5,7 +5,7 @@ product integration, and the portfolio that shows them. This file tracks what
 is done, what is next, and why the order is what it is. Per-feature decisions
 live in `docs/superpowers/specs/`.
 
-*Last updated: 2026-10-03*
+*Last updated: 2026-10-06*
 
 ## Status at a glance
 
@@ -15,10 +15,13 @@ live in `docs/superpowers/specs/`.
 | 2 | Horizontal scaling + load testing | Done; order/inventory path now parked |
 | 3 | LLM feature in the product | Done, as a portfolio assistant |
 | 4 | RAG over the portfolio | In progress |
-| 5 | Going public | In progress |
-| 6 | Resilience patterns | Not started |
-| 7 | CI/CD | Not started |
-| 8 | Kubernetes | Not started |
+| 5 | LLM security | Not started |
+| 6 | Web security | Not started |
+| 7 | Terraform + going live | In progress |
+| 8 | Eval set | Not started |
+| 9 | Resilience patterns | Not started |
+| 10 | CI/CD | Not started |
+| 11 | Kubernetes | Not started |
 
 ## Done
 
@@ -76,33 +79,60 @@ Shipped:
   provider on a hosted one, then shows a fixed welcome message
 
 Remaining:
-- Hybrid dense + keyword search
-- Retrieval eval harness, to tune `RETRIEVAL_MIN_SCORE` against data rather
-  than by feel
+- Hybrid dense + keyword search, once the eval set can show it helps
 - Citations surfaced in the frontend
 - Prompt caching on the fixed system prompt, once on a provider that supports it
 
 ## Next
 
-### 5. Going public
+### 5. LLM security
+The top risk for a bot that represents a real person: a visitor makes it say
+something false or embarrassing and screenshots it.
+- Prompt injection: a system prompt that answers only from sources and refuses
+  role-play and instruction overrides
+- Forged assistant turns: the stateless server trusts client-sent history, so
+  assistant messages must be validated or stripped
+- Red-team the bot with adversarial questions, kept for the eval set
+
+### 6. Web security
+Classic abuse and cost controls for an unauthenticated endpoint.
+- Per-IP rate limiting at Envoy
+- Concurrency cap on chat streams, rejecting fast instead of queueing on the GPU
+- `max_tokens` ceiling per turn, and request body limits at Envoy
+- Keep crawlers from triggering `Warmup`
+- Alerts on token spend from the existing token metrics
+
+### 7. Terraform + going live
 - Done: public-facing frontend restyled with Tailwind v4: full-height chat,
   header with name, role and contact links, light and dark themes
-- Hosted OpenAI-compatible provider in place of Ollama, with a spend cap, a
-  `max_tokens` ceiling and rate limiting first
+- Terraform for the host, DNS and firewall
+- Hosted OpenAI-compatible provider in place of Ollama, with a spend cap
 - TLS and a registered domain
 - Env-driven frontend `baseUrl`
 
+### 8. Eval set
+Unit tests show the code works; an eval set shows the answers do.
+- Golden questions a recruiter would ask, each with its expected source chunk
+  and the facts the answer must contain
+- Unanswerable questions whose correct reply is a decline, plus the red-team
+  questions from LLM security
+- Retrieval scored separately from answers: recall@k needs no LLM and is
+  deterministic; answers are scored for faithfulness, citations and declines
+- Before/after runs on the same set for any chunker, prompt or model change
+- Tune `RETRIEVAL_MIN_SCORE` from the score distributions of answerable vs
+  unanswerable questions, biased towards declining
+
 ## Later
 
-### 6. Resilience patterns
+### 9. Resilience patterns
 - Retry with backoff on provider 429s and overload; fallback model
 - Circuit breaker on gRPC calls
 - Dead letter queue and idempotency keys, if the queue path comes back
 
-### 7. CI/CD
+### 10. CI/CD
 - GitHub Actions: build → test → push images → deploy
 
-### 8. Kubernetes
+### 11. Kubernetes
 - Translate `docker-compose.yml` to manifests or Helm charts
 - HPA on CPU, or on queue depth if the queue path comes back
 - `kubernetes_sd_configs` + RBAC in place of `docker_sd_configs`
@@ -113,5 +143,7 @@ Observability came first because it is the feedback loop for everything else.
 AI came before Kubernetes because it is the skill most in demand, and because
 an LLM under load reuses the observability and scaling work already done.
 Going public now outranks orchestration: a portfolio nobody can reach shows
-nothing, and the guardrails for a hosted provider are what a public endpoint
-needs first.
+nothing. Both security steps come before it: a public, unauthenticated
+endpoint about a real person needs its guardrails before its first visitor.
+The eval set follows going live, so real visitor questions can seed it
+alongside the hand-written ones.
