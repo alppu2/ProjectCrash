@@ -26,9 +26,9 @@ var allowedRoots = []struct {
 }{
 	{"corpus", "background"},
 	{"proto", "source"},
-	{"order-service", "source"},
-	{"chat-service", "source"},
-	{"inventory-service", "source"},
+	{"services/order-service", "source"},
+	{"services/chat-service", "source"},
+	{"services/inventory-service", "source"},
 	{"frontend/src", "source"},
 	{"docs/superpowers", "docs"},
 	{"docs/roadmap.md", "docs"},
@@ -44,11 +44,11 @@ var allowedExts = map[string]bool{
 // path rather than by directory name: "chat" and "orders" are ordinary words,
 // and a name match would also drop frontend/src/components/chat.
 var skipDirs = map[string]bool{
-	"node_modules":         true,
-	"dist":                 true,
-	"frontend/src/gen":     true,
-	"chat-service/chat":    true,
-	"order-service/orders": true,
+	"node_modules":                  true,
+	"dist":                          true,
+	"frontend/src/gen":              true,
+	"services/chat-service/chat":    true,
+	"services/order-service/orders": true,
 }
 
 // Walk selects every file that sits under an allowed root, carries an allowed

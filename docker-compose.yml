@@ -4,9 +4,9 @@ services:
   # order-service:
   #   build:
   #     context: .
-  #     dockerfile: order-service/Dockerfile
+  #     dockerfile: services/order-service/Dockerfile
   #   env_file:
-      # - order-service/.env
+      # - services/order-service/.env
   #   networks:
   #     - micro-network
   #   depends_on:
@@ -17,17 +17,17 @@ services:
   #   develop:
   #     watch:
   #       - action: rebuild
-  #         path: ./order-service
+  #         path: ./services/order-service
   #       - action: rebuild
   #         path: ./orders
 
   # inventory-service:
   #   build:
   #     context: .
-  #     dockerfile: inventory-service/Dockerfile
+  #     dockerfile: services/inventory-service/Dockerfile
   #   container_name: inventory-service
   #   env_file:
-  #     - inventory-service/.env
+  #     - services/inventory-service/.env
   #   ports:
   #     - "9092:9091"
   #   networks:
@@ -39,10 +39,10 @@ services:
   chat-service:
     build:
       context: .
-      dockerfile: chat-service/Dockerfile
+      dockerfile: services/chat-service/Dockerfile
     container_name: chat-service
     env_file:
-      - chat-service/.env
+      - services/chat-service/.env
     # RESPONDER=llm exits at startup until the retrieval index exists. Restarting
     # on failure lets a fresh `up` recover once ingest has run, instead of
     # staying down until someone starts it by hand.
@@ -87,7 +87,7 @@ services:
       OLLAMA_CONTEXT_LENGTH: 16384
     # Pull on every start so a fresh volume self-provisions. The pull is a no-op
     # once the model is in the volume. NOTE: this model name is duplicated in
-    # chat-service/.env as LLM_MODEL — change both together, or requests fail
+    # services/chat-service/.env as LLM_MODEL — change both together, or requests fail
     # with reason="model_missing".
     entrypoint:
       - /bin/sh
@@ -104,7 +104,7 @@ services:
         # running but never healthy, so `up` would block for start_period plus
         # 60 retries — ~20 minutes — with the cause buried in the logs.
         ollama pull llama3.2:3b || exit 1
-        # NOTE: duplicated in chat-service/.env as EMBED_MODEL. Change both
+        # NOTE: duplicated in services/chat-service/.env as EMBED_MODEL. Change both
         # together, or ingest fails against a model the server does not serve.
         ollama pull nomic-embed-text || exit 1
         wait $$pid
@@ -151,7 +151,7 @@ services:
   ingest:
     build:
       context: .
-      dockerfile: chat-service/Dockerfile
+      dockerfile: services/chat-service/Dockerfile
     # Not started by `up`: `docker compose run --rm ingest`. Serving stays
     # decoupled from indexing — indexing at startup would grow boot time with
     # the corpus and re-embed on every restart.
@@ -159,7 +159,7 @@ services:
       - tools
     entrypoint: ["/ingest"]
     env_file:
-      - chat-service/.env
+      - services/chat-service/.env
     volumes:
       # The repository is its own corpus. Read-only: ingest never writes here,
       # and the allowlist in sources.go is what keeps .env out of the index.
@@ -194,7 +194,7 @@ services:
   #     - "15672:15672"
   #     - "15692:15692"
   #   volumes:
-  #     - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+  #     - ./infra/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
   #   networks:
   #     - micro-network
   #   healthcheck:
@@ -208,7 +208,7 @@ services:
     container_name: prometheus
     user: root
     volumes:
-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9090:9090"
@@ -219,7 +219,7 @@ services:
     image: grafana/loki:latest
     container_name: loki
     volumes:
-      - ./loki/loki-config.yml:/etc/loki/local-config.yaml
+      - ./infra/loki/loki-config.yml:/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -230,7 +230,7 @@ services:
     image: grafana/tempo:latest
     container_name: tempo
     volumes:
-      - ./tempo/tempo-config.yml:/etc/tempo.yaml
+      - ./infra/tempo/tempo-config.yml:/etc/tempo.yaml
     ports:
       - "3200:3200"
       - "4317:4317"
@@ -242,7 +242,7 @@ services:
     image: grafana/promtail:latest
     container_name: promtail
     volumes:
-      - ./promtail/promtail-config.yml:/etc/promtail/config.yml
+      - ./infra/promtail/promtail-config.yml:/etc/promtail/config.yml
       - /var/run/docker.sock:/var/run/docker.sock
     command: -config.file=/etc/promtail/config.yml
     networks:
@@ -256,8 +256,8 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./grafana/provisioning:/etc/grafana/provisioning
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+      - ./infra/grafana/dashboards:/var/lib/grafana/dashboards
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
@@ -272,7 +272,7 @@ services:
     image: envoyproxy/envoy:v1.25-latest
     container_name: envoy-proxy
     volumes:
-      - ./envoy/envoy.yaml:/etc/envoy/envoy.yaml
+      - ./infra/envoy/envoy.yaml:/etc/envoy/envoy.yaml
     ports:
       - "8080:8080"
     networks:

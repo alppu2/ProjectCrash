@@ -1,8 +1,8 @@
 FROM golang:1.26 AS builder
 WORKDIR /app
 
-COPY inventory-service/go.mod inventory-service/go.sum ./
-COPY inventory-service/*.go ./
+COPY services/inventory-service/go.mod services/inventory-service/go.sum ./
+COPY services/inventory-service/*.go ./
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /inventory-service .
 

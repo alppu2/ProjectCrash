@@ -15,7 +15,7 @@ This means anything user-visible is portfolio surface: copy, error states, dashb
 Each service needs a `.env` before compose will start it — `docker compose` uses `env_file`, not defaults:
 
 ```bash
-cp chat-service/.env.example chat-service/.env        # order/inventory-service too, when restored
+cp services/chat-service/.env.example services/chat-service/.env   # order/inventory-service too, when restored
 ```
 
 Stack:
@@ -31,10 +31,10 @@ With `RESPONDER=llm`, chat-service exits at startup until the model and a non-em
 
 When the order path is restored: `--scale order-service=3` scales it, and `docker compose watch` rebuilds it on source change.
 
-Go services (each directory is its own module — `cd` in first, there is no workspace):
+Go services live under `services/`; infra config (Envoy, Prometheus, Grafana, Loki, Tempo, Promtail, RabbitMQ) under `infra/`. Each service is its own module — `cd` in first, there is no workspace:
 
 ```bash
-cd chat-service && go build ./... && go test ./...
+cd services/chat-service && go build ./... && go test ./...
 go test -run TestValidateHistory ./...                  # single test
 go vet ./...
 ```
@@ -58,7 +58,7 @@ Endpoints when the stack is up: Envoy `:8080` (the only entry point for the fron
 
 `proto/service.proto` (package `orders`) and `proto/chat.proto` (package `chat.v1`) are the source of truth. Generated code is **committed**, and each language uses a different toolchain:
 
-- **Go** — `protoc` + `protoc-gen-go` / `protoc-gen-go-grpc`, output committed inside the consuming module (`order-service/orders/`, `chat-service/chat/`) because `go_package` is a relative `./orders` / `./chat`. The Dockerfiles copy that subdirectory explicitly, so a new service's generated package must be added to its Dockerfile.
+- **Go** — `protoc` + `protoc-gen-go` / `protoc-gen-go-grpc`, output committed inside the consuming module (`services/order-service/orders/`, `services/chat-service/chat/`) because `go_package` is a relative `./orders` / `./chat`. The Dockerfiles copy that subdirectory explicitly, so a new service's generated package must be added to its Dockerfile.
 - **TypeScript** — buf with `@bufbuild/protoc-gen-es` + `@connectrpc/protoc-gen-connect-es` (devDeps in the root `package.json`), config in `frontend/buf.gen.yaml`, output to `frontend/src/gen/`.
 
 Changing a proto means regenerating both sides and committing the output.
@@ -71,21 +71,21 @@ Changing a proto means regenerating both sides and committing the output.
 
 **Async path.** `order-service.SendPacket` writes to MongoDB, then publishes JSON to the `packets` queue; `inventory-service` consumes it. The two services agree on the message shape by convention only — `order-service` marshals an inline map, `inventory-service` unmarshals into its own `DataPacket` struct. Changing one requires changing the other.
 
-**Chat streaming.** `chat.proto`'s `Chat` is a server-streaming RPC emitting `ChatChunk` frames (`text_delta`… then a terminal `done`). The server is stateless: the client sends full conversation history each turn (`useChatStream.ts` caps it at `MAX_HISTORY`, `chat.go` enforces hard server-side limits since the endpoint is unauthenticated). The unary `Warmup`, called on page load by `useWarmup.ts`, readies the provider before the first turn; `RetrievingResponder` shares one in-flight warmup and reuses a success for 20 minutes (`internal/responder/warmup.go`), and echo has nothing to warm. `Responder` in `chat-service/internal/responder/responder.go` is the provider seam, chosen by `RESPONDER` in `responder.New`: `echo` (`EchoResponder`, zero-cost, replays the last user message) or `llm` (`RetrievingResponder` wrapping `OpenAIResponder`, for any OpenAI-compatible provider — Ollama locally, a hosted endpoint by changing `LLM_BASE_URL`/`LLM_API_KEY`). A new provider should not touch the RPC handler.
+**Chat streaming.** `chat.proto`'s `Chat` is a server-streaming RPC emitting `ChatChunk` frames (`text_delta`… then a terminal `done`). The server is stateless: the client sends full conversation history each turn (`useChatStream.ts` caps it at `MAX_HISTORY`, `internal/server/chat.go` enforces hard server-side limits since the endpoint is unauthenticated). The unary `Warmup`, called on page load by `useWarmup.ts`, readies the provider before the first turn; `RetrievingResponder` shares one in-flight warmup and reuses a success for 20 minutes (`internal/responder/warmup.go`), and echo has nothing to warm. `Responder` in `services/chat-service/internal/responder/responder.go` is the provider seam, chosen by `RESPONDER` in `responder.New`: `echo` (`EchoResponder`, zero-cost, replays the last user message) or `llm` (`RetrievingResponder` wrapping `OpenAIResponder`, for any OpenAI-compatible provider — Ollama locally, a hosted endpoint by changing `LLM_BASE_URL`/`LLM_API_KEY`). A new provider should not touch the RPC handler.
 
-**Retrieval.** `RetrievingResponder` condenses follow-ups into a standalone question, embeds it, searches Qdrant with a reserved background floor, and grounds the turn; below `RETRIEVAL_MIN_SCORE` nothing reaches the model. The index is built by `chat-service/cmd/ingest` (the `ingest` compose service) over the repo itself, incremental by content hash. The collection name is derived from the embedding model and its dimension, so changing `EMBED_MODEL` means re-ingesting.
+**Retrieval.** `RetrievingResponder` condenses follow-ups into a standalone question, embeds it, searches Qdrant with a reserved background floor, and grounds the turn; below `RETRIEVAL_MIN_SCORE` nothing reaches the model. The index is built by `services/chat-service/cmd/ingest` (the `ingest` compose service) over the repo itself, incremental by content hash. The collection name is derived from the embedding model and its dimension, so changing `EMBED_MODEL` means re-ingesting.
 
 **`internal/rag/sources.go` is the security boundary.** Its allowlist decides what text unauthenticated visitors can get quoted back. Add paths deliberately, never widen to a denylist, and keep `TestWalkNeverSelectsSecrets` passing; personal material goes in gitignored `corpus/`.
 
 ## Cross-cutting conventions
 
-- **Observability is per-service and duplicated on purpose.** There is no shared Go module, so `telemetry.go` (OTLP → Tempo), `metrics.go` (promauto collectors), and `log_trace.go` (`logWithTrace` injecting `trace_id`/`span_id` into slog) are copied into each service. Fixes to one usually belong in all of them. chat-service is the exception: its copy is `internal/obs/log_trace.go` exporting `LogWithTrace`, because `internal/responder` needs it too and importing the root package would cycle.
+- **Observability is per-service and duplicated on purpose.** There is no shared Go module, so `telemetry.go` (OTLP → Tempo), `metrics.go` (promauto collectors), and `log_trace.go` (`logWithTrace` injecting `trace_id`/`span_id` into slog) are copied into each service. Fixes to one usually belong in all of them. chat-service is the exception: it has `cmd/` + `internal/` layout, so its copies are `internal/obs` (`LogWithTrace`, `InitTracer`) and `internal/server/metrics.go`.
 - **Every service serves Prometheus metrics on `:9091`** from a goroutine started before anything else in `main`, and logs JSON via `slog.NewJSONHandler` to stdout (Promtail ships it to Loki).
 - **Both `docker_sd_configs` regexes must survive a compose-generated name.** `prometheus.yml` and `promtail-config.yml` discover containers the same way, and relabel regexes are *fully anchored* — a bare `/(order-service)` never matches `/<project>-order-service-1`, which is what `order-service` is called because it has no `container_name`. Match with `.*` on both sides, and add the service to both files. Getting this wrong drops that service's logs or metrics silently: nothing errors, the target just never appears.
 - **Trace context crosses gRPC via `otelgrpc` stats handlers, and crosses RabbitMQ via `amqpHeaderCarrier`** (`amqp_carrier.go`) — inject into `amqp.Table` headers on publish, extract on consume. A new async hop must do both or the trace breaks.
 - **Degrade, don't die — except on grounding.** Optional dependencies degrade; grounding is not optional. chat-service in llm mode refuses to start without its index, and a per-turn retrieval failure swaps in `unavailableEnvelope`, which has the model say it cannot look anything up rather than answer from memory about a real person; an unknown config value is a startup error, never a silent fallback to echo. Tracer init failure logs a warning and continues untraced; a RabbitMQ publish failure still returns success because the packet is already durable in MongoDB. `order-service.ensureChannel` reconnects lazily — it tries a new channel on the existing connection before a full redial, and callers must use the returned channel rather than re-reading `s.amqpChannel`.
 - **Metric accounting is centralized per handler.** `chatServer.Chat` records exactly one `chatStreamsTotal` increment and one duration observation in a single deferred func, with `outcome` only ever downgraded; don't add a second Inc/Observe pair on a new exit path.
-- **A collector lives with the code that moves it.** chat-service's stream-level counters are in the root `metrics.go`; everything the responder stack observes (provider, retrieval, embed, condense) is in `internal/responder/metrics.go`. Both register on promauto's default registry, so `/metrics` is unaffected by which file a collector sits in.
+- **A collector lives with the code that moves it.** chat-service's stream-level counters are in `internal/server/metrics.go`; everything the responder stack observes (provider, retrieval, embed, condense) is in `internal/responder/metrics.go`. Both register on promauto's default registry, so `/metrics` is unaffected by which file a collector sits in.
 - **Client disconnects are not errors.** `responder.ClassifyOutcome` treats `context.Canceled` and gRPC `codes.Canceled` alike, because a hung-up browser surfaces as either depending on where it is noticed.
 - **Frontend styling is Tailwind v4 over semantic tokens.** `src/index.css` defines `--bg`, `--fg`, `--accent` and friends as plain CSS variables, swapped for dark mode and exposed to Tailwind via `@theme inline` (`bg-surface`, `text-muted`…). Use those, not raw palette classes, and read the same variables when a chart library takes colours as props.
 - **Frontend transport is shared.** `frontend/src/api.ts` builds one `createGrpcWebTransport` pointed at Envoy and one promise client per service (today only `chatClient`); auth interceptors, retries, and a env-driven baseUrl belong there, not in components.

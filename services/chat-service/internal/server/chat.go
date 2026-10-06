@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"context"
@@ -21,6 +21,13 @@ type chatServer struct {
 	chatpb.UnimplementedChatServiceServer
 	responder responder.Responder
 	warmer    responder.Warmer // nil: nothing to warm, always ready
+}
+
+// New returns the ChatService handler for r.
+func New(r responder.Responder) chatpb.ChatServiceServer {
+	// Echo has no Warmer, so the assertion leaves warmer nil.
+	warmer, _ := r.(responder.Warmer)
+	return &chatServer{responder: r, warmer: warmer}
 }
 
 // Chat records exactly one chatStreamsTotal increment and one

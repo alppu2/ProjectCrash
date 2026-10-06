@@ -17,7 +17,7 @@ func TestWalkNeverSelectsSecrets(t *testing.T) {
 	}
 	for _, s := range got {
 		switch s.Path {
-		case ".env", "chat-service/.env", "chat-service/.env.local":
+		case ".env", "services/chat-service/.env", "services/chat-service/.env.local":
 			t.Errorf("Walk() selected %q — the allowlist must exclude it", s.Path)
 		}
 	}
@@ -37,7 +37,7 @@ func TestWalkSelectsAllowedRootsAndExtensions(t *testing.T) {
 
 	want := map[string]string{
 		"corpus/background.md":               "background",
-		"chat-service/chat.go":               "source",
+		"services/chat-service/chat.go":      "source",
 		"frontend/src/api.ts":                "source",
 		"proto/chat.proto":                   "source",
 		"docs/superpowers/specs/a-design.md": "docs",
@@ -63,11 +63,11 @@ func TestWalkSkipsGeneratedAndTests(t *testing.T) {
 	}
 	for _, s := range got {
 		switch s.Path {
-		case "chat-service/chat/chat.pb.go",
-			"order-service/orders/service.pb.go",
+		case "services/chat-service/chat/chat.pb.go",
+			"services/order-service/orders/service.pb.go",
 			"frontend/src/gen/chat_pb.ts",
 			"frontend/node_modules/pkg/index.ts",
-			"chat-service/chat_test.go",
+			"services/chat-service/chat_test.go",
 			"frontend/src/components/chat/useChatStream.test.ts",
 			"docs/notes.md":
 			t.Errorf("Walk() selected %q, which must be skipped", s.Path)
@@ -92,7 +92,7 @@ func TestWalkKeepsNonGeneratedDirsNamedLikeGeneratedOnes(t *testing.T) {
 	}
 	for _, want := range []string{
 		"frontend/src/components/chat/ChatPanel.tsx",
-		"order-service/orders_handler.go",
+		"services/order-service/orders_handler.go",
 	} {
 		if !selected[want] {
 			t.Errorf("Walk() skipped %q, which is not generated code", want)
@@ -106,7 +106,7 @@ func TestWalkKeepsNonGeneratedDirsNamedLikeGeneratedOnes(t *testing.T) {
 func TestWalkSkipsSymlinks(t *testing.T) {
 	root := fixtureTree(t)
 	link := filepath.Join(root, "docs", "superpowers", "leak.md")
-	if err := os.Symlink(filepath.Join("..", "..", "chat-service", ".env"), link); err != nil {
+	if err := os.Symlink(filepath.Join("..", "..", "services", "chat-service",".env"), link); err != nil {
 		t.Skipf("cannot create symlinks on this host: %v", err)
 	}
 
@@ -116,7 +116,7 @@ func TestWalkSkipsSymlinks(t *testing.T) {
 	}
 	for _, s := range got {
 		if s.Path == "docs/superpowers/leak.md" {
-			t.Errorf("Walk() selected symlink %q, whose target is chat-service/.env", s.Path)
+			t.Errorf("Walk() selected symlink %q, whose target is services/chat-service/.env", s.Path)
 		}
 	}
 }
@@ -142,15 +142,15 @@ func fixtureTree(t *testing.T) string {
 	root := t.TempDir()
 	files := []string{
 		".env",
-		"chat-service/.env",
-		"chat-service/.env.local",
+		"services/chat-service/.env",
+		"services/chat-service/.env.local",
 		"corpus/background.md",
-		"chat-service/chat.go",
-		"chat-service/chat_test.go",
+		"services/chat-service/chat.go",
+		"services/chat-service/chat_test.go",
 		"frontend/src/components/chat/useChatStream.test.ts",
-		"chat-service/chat/chat.pb.go",
-		"order-service/orders/service.pb.go",
-		"order-service/orders_handler.go",
+		"services/chat-service/chat/chat.pb.go",
+		"services/order-service/orders/service.pb.go",
+		"services/order-service/orders_handler.go",
 		"frontend/src/api.ts",
 		"frontend/src/components/chat/ChatPanel.tsx",
 		"frontend/src/gen/chat_pb.ts",
