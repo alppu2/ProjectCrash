@@ -105,8 +105,8 @@ func ingestFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	write(t, root, "corpus/background.md", "# Background\n\nBackend engineer in Finland.\n")
-	write(t, root, "chat-service/chat.go", "package main\n\n// A does a thing.\nfunc A() {}\n")
-	write(t, root, "chat-service/.env", "SECRET=hunter2\n")
+	write(t, root, "services/chat-service/chat.go", "package main\n\n// A does a thing.\nfunc A() {}\n")
+	write(t, root, "services/chat-service/.env", "SECRET=hunter2\n")
 	return root
 }
 
@@ -197,13 +197,13 @@ func TestIngestSweepsDeletedFile(t *testing.T) {
 	defer done()
 
 	runIngest(t, root, store, false)
-	if err := os.Remove(filepath.Join(root, "chat-service", "chat.go")); err != nil {
+	if err := os.Remove(filepath.Join(root, "services", "chat-service", "chat.go")); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	runIngest(t, root, store, false)
 
 	for id, p := range fake.points {
-		if p.Source == "chat-service/chat.go" {
+		if p.Source == "services/chat-service/chat.go" {
 			t.Errorf("deleted file's point survived: %s", id)
 		}
 	}
@@ -250,7 +250,7 @@ func TestIngestDoesNotSweepAfterEmbedFailure(t *testing.T) {
 	runIngest(t, root, store, false)
 	before := len(fake.points)
 
-	write(t, root, "chat-service/chat.go", "package main\n\n// B does another thing.\nfunc B() {}\n")
+	write(t, root, "services/chat-service/chat.go", "package main\n\n// B does another thing.\nfunc B() {}\n")
 	_, err := Ingest(context.Background(), Options{
 		Root:     root,
 		Store:    store,
@@ -297,7 +297,7 @@ func TestIngestRefusesToSweepAfterEmptyWalk(t *testing.T) {
 // a caller that leaves Log unset must not panic on reaching it.
 func TestIngestCountsUnparseableFilesWithoutALogger(t *testing.T) {
 	root := ingestFixture(t)
-	write(t, root, "chat-service/broken.go", "package main\nfunc ( {")
+	write(t, root, "services/chat-service/broken.go", "package main\nfunc ( {")
 	store, _, done := newFakeQdrant(t)
 	defer done()
 

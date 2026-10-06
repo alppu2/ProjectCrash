@@ -13,7 +13,9 @@ import (
 	"google.golang.org/grpc"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/obs"
 	"chat-service/internal/responder"
+	"chat-service/internal/server"
 )
 
 func main() {
@@ -31,7 +33,7 @@ func main() {
 
 	otelCtx, otelCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer otelCancel()
-	shutdown, err := initTracer(otelCtx)
+	shutdown, err := obs.InitTracer(otelCtx)
 	if err != nil {
 		slog.Warn("failed to init tracer, continuing without tracing", "error", err)
 	} else {
@@ -56,9 +58,7 @@ func main() {
 		slog.Error("failed to build responder", "error", err)
 		os.Exit(1)
 	}
-	// Echo has no Warmer, so the assertion leaves warmer nil.
-	warmer, _ := resp.(responder.Warmer)
-	chatpb.RegisterChatServiceServer(grpcServer, &chatServer{responder: resp, warmer: warmer})
+	chatpb.RegisterChatServiceServer(grpcServer, server.New(resp))
 
 	slog.Info("chat service listening", "port", grpcPort)
 	if err := grpcServer.Serve(lis); err != nil {

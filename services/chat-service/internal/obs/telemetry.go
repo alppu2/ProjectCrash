@@ -1,4 +1,4 @@
-package main
+package obs
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 )
 
-func initTracer(ctx context.Context) (func(), error) {
+func InitTracer(ctx context.Context) (func(), error) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
 		endpoint = "tempo:4317"

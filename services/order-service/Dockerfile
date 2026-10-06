@@ -1,9 +1,9 @@
 FROM golang:1.26 AS builder
 WORKDIR /app
 
-COPY order-service/go.mod order-service/go.sum ./
-COPY order-service/*.go ./
-COPY order-service/orders/ orders/
+COPY services/order-service/go.mod services/order-service/go.sum ./
+COPY services/order-service/*.go ./
+COPY services/order-service/orders/ orders/
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /order-service .
 
