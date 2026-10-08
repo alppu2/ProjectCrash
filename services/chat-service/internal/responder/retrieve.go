@@ -9,6 +9,7 @@ import (
 	"time"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/guard"
 	"chat-service/internal/obs"
 	"chat-service/internal/rag"
 )
@@ -40,6 +41,7 @@ type RetrievingResponder struct {
 	Store     searcher
 	Condenser condenser
 	Warm      warmer
+	Guard     guard.Guard // nil: unguarded, as in tests that predate it
 	TopK      int
 	MinScore  float32
 	Floor     int
@@ -48,16 +50,62 @@ type RetrievingResponder struct {
 }
 
 func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
-	system, err := r.ground(ctx, req.GetMessages())
-	if err != nil {
+	msgs := req.GetMessages()
+
+	// Retrieval runs while the guard checks, so the guard costs no latency.
+	groundCtx, cancelGround := context.WithCancel(ctx)
+	defer cancelGround()
+	type grounded struct {
+		system string
+		err    error
+	}
+	done := make(chan grounded, 1)
+	go func() {
+		system, err := r.ground(groundCtx, msgs)
+		done <- grounded{system, err}
+	}()
+
+	if r.flagged(ctx, msgs) {
+		cancelGround()
+		if err := emit(guardRefusal); err != nil {
+			return Usage{}, err
+		}
+		return Usage{StopReason: "guarded"}, nil
+	}
+
+	g := <-done
+	system := g.system
+	if g.err != nil {
 		// Bare, so classifyOutcome sees a hangup rather than a dead provider.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Usage{}, ctxErr
 		}
-		obs.LogWithTrace(ctx, slog.Default()).Warn("retrieval unavailable, degrading the reply", "error", err)
+		obs.LogWithTrace(ctx, slog.Default()).Warn("retrieval unavailable, degrading the reply", "error", g.err)
 		system = unavailableEnvelope
 	}
 	return r.Inner.withSystem(system).Stream(ctx, req, emit)
+}
+
+// flagged fails open: signing and the prompt still hold when the guard is down.
+func (r *RetrievingResponder) flagged(ctx context.Context, msgs []*chatpb.Message) bool {
+	if r.Guard == nil {
+		return false
+	}
+	var texts []string
+	for _, m := range msgs {
+		if m.GetRole() == chatpb.Role_ROLE_USER {
+			texts = append(texts, m.GetContent())
+		}
+	}
+	v, err := r.Guard.Check(ctx, texts)
+	log := obs.LogWithTrace(ctx, slog.Default())
+	switch {
+	case err != nil && ctx.Err() == nil:
+		log.Warn("injection guard unavailable, continuing unguarded", "error", err)
+	case v.Flagged:
+		log.Info("injection guard flagged a turn", "score", v.Score)
+	}
+	return err == nil && v.Flagged
 }
 
 // Warmup readies both models a turn needs. The probe text is irrelevant;

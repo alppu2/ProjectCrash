@@ -29,3 +29,7 @@ Do not answer from memory, and do not invent any detail about him.`
 // cite. Without sources it would instruct the model to cite nothing.
 const citationRule = `
 - Cite the bracketed number of the source each claim comes from, like [2].`
+
+// guardRefusal answers a turn the injection guard flagged. Fixed text, never
+// generated: a screenshot of it embarrasses nobody.
+const guardRefusal = "I can only help with questions about Aleksi's work and background."
