@@ -20,6 +20,7 @@ type Source struct {
 // allowedRoots is an allowlist, not a denylist. A denylist fails open on the
 // file nobody thought of, and this index is quoted back to unauthenticated
 // visitors. .env has no allowed extension, so no rule has to remember it.
+// Only docs kept current belong here: specs are historical by convention.
 var allowedRoots = []struct {
 	prefix string
 	kind   string
@@ -30,9 +31,7 @@ var allowedRoots = []struct {
 	{"services/chat-service", "source"},
 	{"services/inventory-service", "source"},
 	{"frontend/src", "source"},
-	{"docs/superpowers", "docs"},
 	{"docs/roadmap.md", "docs"},
-	{"CLAUDE.md", "docs"},
 	{"README.md", "docs"},
 }
 

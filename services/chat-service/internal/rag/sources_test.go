@@ -36,18 +36,34 @@ func TestWalkSelectsAllowedRootsAndExtensions(t *testing.T) {
 	}
 
 	want := map[string]string{
-		"corpus/background.md":               "background",
-		"services/chat-service/chat.go":      "source",
-		"frontend/src/api.ts":                "source",
-		"proto/chat.proto":                   "source",
-		"docs/superpowers/specs/a-design.md": "docs",
-		"docs/roadmap.md":                    "docs",
-		"CLAUDE.md":                          "docs",
-		"README.md":                          "docs",
+		"corpus/background.md":          "background",
+		"services/chat-service/chat.go": "source",
+		"frontend/src/api.ts":           "source",
+		"proto/chat.proto":              "source",
+		"docs/roadmap.md":               "docs",
+		"README.md":                     "docs",
 	}
 	for path, wantKind := range want {
 		if kinds[path] != wantKind {
 			t.Errorf("kind for %q = %q, want %q", path, kinds[path], wantKind)
+		}
+	}
+}
+
+// Specs are historical records and CLAUDE.md is written as orders to an AI.
+// Indexed, the bot quotes superseded decisions as current, and the red-team
+// set feeds its own attacks back as sources.
+func TestWalkSkipsHistoricalDocsAndEvals(t *testing.T) {
+	root := fixtureTree(t)
+
+	got, err := Walk(root)
+	if err != nil {
+		t.Fatalf("Walk() error = %v", err)
+	}
+	for _, s := range got {
+		switch s.Path {
+		case "docs/superpowers/specs/a-design.md", "CLAUDE.md", "evals/redteam/notes.md":
+			t.Errorf("Walk() selected %q, which must stay out of the index", s.Path)
 		}
 	}
 }
@@ -105,8 +121,8 @@ func TestWalkKeepsNonGeneratedDirsNamedLikeGeneratedOnes(t *testing.T) {
 // this, the allowlist filters names, not the bytes that reach visitors.
 func TestWalkSkipsSymlinks(t *testing.T) {
 	root := fixtureTree(t)
-	link := filepath.Join(root, "docs", "superpowers", "leak.md")
-	if err := os.Symlink(filepath.Join("..", "..", "services", "chat-service",".env"), link); err != nil {
+	link := filepath.Join(root, "corpus", "leak.md")
+	if err := os.Symlink(filepath.Join("..", "services", "chat-service", ".env"), link); err != nil {
 		t.Skipf("cannot create symlinks on this host: %v", err)
 	}
 
@@ -115,7 +131,7 @@ func TestWalkSkipsSymlinks(t *testing.T) {
 		t.Fatalf("Walk() error = %v", err)
 	}
 	for _, s := range got {
-		if s.Path == "docs/superpowers/leak.md" {
+		if s.Path == "corpus/leak.md" {
 			t.Errorf("Walk() selected symlink %q, whose target is services/chat-service/.env", s.Path)
 		}
 	}
@@ -161,6 +177,7 @@ func fixtureTree(t *testing.T) string {
 		"docs/notes.md",
 		"CLAUDE.md",
 		"README.md",
+		"evals/redteam/notes.md",
 		"secrets.txt",
 	}
 	for _, f := range files {
