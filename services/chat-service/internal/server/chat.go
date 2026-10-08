@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/history"
 	"chat-service/internal/obs"
 	"chat-service/internal/responder"
 )
@@ -21,13 +22,14 @@ type chatServer struct {
 	chatpb.UnimplementedChatServiceServer
 	responder responder.Responder
 	warmer    responder.Warmer // nil: nothing to warm, always ready
+	signer    *history.Signer
 }
 
 // New returns the ChatService handler for r.
 func New(r responder.Responder) chatpb.ChatServiceServer {
 	// Echo has no Warmer, so the assertion leaves warmer nil.
 	warmer, _ := r.(responder.Warmer)
-	return &chatServer{responder: r, warmer: warmer}
+	return &chatServer{responder: r, warmer: warmer, signer: history.NewSigner()}
 }
 
 // Chat records exactly one chatStreamsTotal increment and one
@@ -48,18 +50,28 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 		return err
 	}
 
+	msgs, dropped := s.signer.Verify(req.GetMessages())
+	for reason, n := range dropped {
+		chatHistoryDroppedTotal.WithLabelValues(reason).Add(float64(n))
+	}
+	req = &chatpb.ChatRequest{Messages: msgs}
+	question := msgs[len(msgs)-1].GetContent()
+
 	trace.SpanFromContext(ctx).SetAttributes(
 		attribute.Int("chat.history_len", len(req.GetMessages())),
 	)
 	log := obs.LogWithTrace(ctx, slog.Default())
 	log.Info("chat stream started", "history_len", len(req.GetMessages()))
 
+	var reply strings.Builder
 	usage, err := s.responder.Stream(ctx, req, func(delta string) error {
 		if err := stream.Send(&chatpb.ChatChunk{
 			Event: &chatpb.ChatChunk_TextDelta{TextDelta: delta},
 		}); err != nil {
 			return err
 		}
+		// Only what reached the client is signed: that is what it sends back.
+		reply.WriteString(delta)
 		chatChunksSentTotal.Inc()
 		return nil
 	})
@@ -86,6 +98,7 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 			StopReason:   usage.StopReason,
 			InputTokens:  usage.InputTokens,
 			OutputTokens: usage.OutputTokens,
+			Signature:    s.signer.Sign(question, reply.String()),
 		}},
 	}); err != nil {
 		outcome = responder.ClassifyOutcome(err)
