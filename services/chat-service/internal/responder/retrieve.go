@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -150,7 +151,7 @@ func (r *RetrievingResponder) ground(ctx context.Context, msgs []*chatpb.Message
 		// is the honest answer to a question the corpus cannot answer.
 		return corpusEnvelope, nil
 	}
-	return corpusEnvelope + citationRule + "\n\n" + assemblePrompt(hits), nil
+	return corpusEnvelope + citationRule + "\n\n" + assemblePrompt(hits) + "\n" + sourcesReminder, nil
 }
 
 // query folds history into a standalone question. A follow-up carries its
@@ -219,14 +220,21 @@ func bestScore(hits []rag.Hit) float32 {
 	return best
 }
 
+// sourcesTag matches the spotlight delimiters in any case or spacing, so a
+// chunk cannot close the block early.
+var sourcesTag = regexp.MustCompile(`(?i)<\s*/?\s*sources\s*>`)
+
 // assemblePrompt numbers the surviving chunks. Numbering is positional, so the
 // list handed to the model and the citations it is told to use cannot drift.
 func assemblePrompt(hits []rag.Hit) string {
 	var b strings.Builder
-	b.WriteString("Sources:\n")
+	b.WriteString("<sources>\nSources:\n")
 	for i, h := range hits {
-		fmt.Fprintf(&b, "  [%d] (%s) %s\n", i+1, citation(h.Payload), collapse(h.Payload.Text))
+		line := fmt.Sprintf("  [%d] (%s) %s", i+1, citation(h.Payload), collapse(h.Payload.Text))
+		b.WriteString(sourcesTag.ReplaceAllString(line, ""))
+		b.WriteString("\n")
 	}
+	b.WriteString("</sources>\n")
 	return b.String()
 }
 
