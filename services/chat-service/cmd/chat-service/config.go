@@ -23,6 +23,8 @@ const (
 	defaultTopK            = 6
 	defaultMinScore        = 0.5
 	defaultBackgroundFloor = 2
+	defaultGuardURL        = "http://guard"
+	defaultGuardThreshold  = 0.5
 )
 
 // loadConfig parses the environment into a responder.Config. Every check that
@@ -71,6 +73,15 @@ func loadConfig() (responder.Config, error) {
 	}
 	if cfg.MinScore < -1 || cfg.MinScore > 1 {
 		return responder.Config{}, fmt.Errorf("RETRIEVAL_MIN_SCORE=%v is outside cosine similarity's range of -1 to 1", cfg.MinScore)
+	}
+
+	cfg.GuardURL = envOr("GUARD_URL", defaultGuardURL)
+	if err := validateURLVar("GUARD_URL", cfg.GuardURL); err != nil {
+		return responder.Config{}, err
+	}
+	cfg.GuardThreshold = envFloat("GUARD_THRESHOLD", defaultGuardThreshold)
+	if cfg.GuardThreshold <= 0 || cfg.GuardThreshold >= 1 {
+		return responder.Config{}, fmt.Errorf("GUARD_THRESHOLD=%v must be strictly between 0 and 1: 0 flags every turn, 1 none", cfg.GuardThreshold)
 	}
 	return cfg, nil
 }

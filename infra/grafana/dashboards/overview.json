@@ -83,6 +83,34 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 6,
+      "title": "Chat Guard Verdicts (per minute)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (verdict) (rate(chat_guard_checks_total[5m])) * 60",
+          "legendFormat": "{{verdict}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Chat History Turns Dropped (per minute)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(chat_history_dropped_total[5m])) * 60",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "templating": {"list": []},

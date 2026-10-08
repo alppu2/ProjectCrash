@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"chat-service/internal/guard"
 	"chat-service/internal/rag"
 )
 
@@ -25,12 +26,17 @@ const (
 type fakeBackend struct {
 	collection *struct{ dims, points int }
 	qdrantCode int // overrides the response when non-zero
+	guardCode  int // /health status; zero means 200
 }
 
 func (f *fakeBackend) serve(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/health":
+			if f.guardCode != 0 {
+				w.WriteHeader(f.guardCode)
+			}
 		case r.URL.Path == "/embeddings":
 			vec := make([]float32, testEmbedDims)
 			json.NewEncoder(w).Encode(map[string]any{
@@ -56,15 +62,17 @@ func (f *fakeBackend) serve(t *testing.T) *httptest.Server {
 
 func llmConfig(url string) Config {
 	return Config{
-		Kind:         "llm",
-		BaseURL:      "http://llm.invalid/v1/",
-		Model:        "qwen3",
-		EmbedBaseURL: url,
-		EmbedModel:   testEmbedModel,
-		QdrantURL:    url,
-		TopK:         5,
-		MinScore:     0.4,
-		Floor:        2,
+		Kind:           "llm",
+		BaseURL:        "http://llm.invalid/v1/",
+		Model:          "qwen3",
+		EmbedBaseURL:   url,
+		EmbedModel:     testEmbedModel,
+		QdrantURL:      url,
+		TopK:           5,
+		MinScore:       0.4,
+		Floor:          2,
+		GuardURL:       url,
+		GuardThreshold: 0.7,
 	}
 }
 
@@ -157,5 +165,23 @@ func TestNewLLMWiresRetriever(t *testing.T) {
 	}
 	if rr.Condenser != condenser(inner) || rr.Warm != warmer(inner) {
 		t.Error("Condenser and Warm should be the same client as Inner")
+	}
+	g, ok := rr.Guard.(*guard.TEIGuard)
+	if !ok || g.BaseURL != srv.URL || g.Threshold != 0.7 {
+		t.Errorf("Guard = %#v, want a *guard.TEIGuard on %s at threshold 0.7", rr.Guard, srv.URL)
+	}
+}
+
+// A guard that never loaded would otherwise fail open on every turn with
+// nothing but a warning per request.
+func TestNewLLMRefusesUnreadyGuard(t *testing.T) {
+	backend := fakeBackend{collection: &struct{ dims, points int }{testEmbedDims, 40}, guardCode: http.StatusServiceUnavailable}
+	srv := backend.serve(t)
+	r, err := New(context.Background(), llmConfig(srv.URL))
+	if err == nil || r != nil {
+		t.Fatalf("New = %T, %v; want a refusal to start without the guard", r, err)
+	}
+	if !strings.Contains(err.Error(), "guard") {
+		t.Errorf("error %q does not name the guard", err)
 	}
 }

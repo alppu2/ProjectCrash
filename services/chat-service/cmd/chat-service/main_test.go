@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"chat-service/internal/guard"
 	"chat-service/internal/responder"
 )
 
@@ -81,6 +82,17 @@ func TestNewResponder(t *testing.T) {
 			// an unreachable error.
 			name:    "an LLM_BASE_URL embedding credentials fails at startup",
 			env:     map[string]string{"RESPONDER": "llm", "LLM_BASE_URL": "https://user:hunter2@api.groq.com/openai/v1"},
+			wantErr: true,
+		},
+		{
+			// 0 flags every turn and 1 flags none; both parse cleanly.
+			name:    "a GUARD_THRESHOLD outside (0, 1) fails at startup",
+			env:     map[string]string{"RESPONDER": "llm", "GUARD_THRESHOLD": "1.5"},
+			wantErr: true,
+		},
+		{
+			name:    "a scheme-less GUARD_URL fails at startup",
+			env:     map[string]string{"RESPONDER": "llm", "GUARD_URL": "guard:80"},
 			wantErr: true,
 		},
 	}
@@ -164,6 +176,7 @@ func TestNewResponderConfiguresTheGroundedResponder(t *testing.T) {
 	t.Setenv("LLM_API_KEY", "gsk_secret")
 	t.Setenv("EMBED_BASE_URL", embedURL)
 	t.Setenv("QDRANT_URL", qdrantURL)
+	t.Setenv("GUARD_URL", stubGuard(t))
 
 	r, err := newResponder(context.Background())
 	if err != nil {
@@ -197,6 +210,16 @@ func TestNewResponderConfiguresTheGroundedResponder(t *testing.T) {
 	if retriever.TopK != defaultTopK || retriever.Floor != defaultBackgroundFloor {
 		t.Errorf("TopK, Floor = %d, %d; want the documented %d, %d", retriever.TopK, retriever.Floor, defaultTopK, defaultBackgroundFloor)
 	}
+	if g, ok := retriever.Guard.(*guard.TEIGuard); !ok || g.Threshold != float32(defaultGuardThreshold) {
+		t.Errorf("Guard = %#v, want a *guard.TEIGuard at the default threshold", retriever.Guard)
+	}
+}
+
+func stubGuard(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	t.Cleanup(srv.Close)
+	return srv.URL
 }
 
 // An empty collection presents as a chat that works but knows nothing, which

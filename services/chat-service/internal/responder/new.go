@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"time"
 
+	"chat-service/internal/guard"
 	"chat-service/internal/rag"
 )
 
@@ -31,6 +33,9 @@ type Config struct {
 	TopK      int
 	MinScore  float64
 	Floor     int
+
+	GuardURL       string
+	GuardThreshold float64
 }
 
 // New builds the Responder named by cfg.Kind. An unknown name is an error, not
@@ -58,7 +63,8 @@ func New(ctx context.Context, cfg Config) (Responder, error) {
 		// Logs whether a key is set, never the key. Worth knowing on a 401.
 		slog.Info("responder configured", "responder", "llm",
 			"base_url", cfg.BaseURL, "model", cfg.Model, "api_key_set", cfg.APIKey != "",
-			"embed_model", retriever.Embedder.ModelID(), "top_k", retriever.TopK)
+			"embed_model", retriever.Embedder.ModelID(), "top_k", retriever.TopK,
+			"guard_threshold", cfg.GuardThreshold)
 		return retriever, nil
 
 	default:
@@ -97,12 +103,24 @@ func newRetriever(ctx context.Context, cfg Config, inner *OpenAIResponder) (*Ret
 		return nil, fmt.Errorf("collection %s is empty; build it with: docker compose run --rm ingest", store.Collection)
 	}
 
+	g := &guard.TEIGuard{
+		BaseURL:   strings.TrimSuffix(cfg.GuardURL, "/"),
+		Threshold: float32(cfg.GuardThreshold),
+		HTTP:      &http.Client{Timeout: 10 * time.Second},
+	}
+	// Per-turn guard failures fail open, so a guard that never loaded would go
+	// unnoticed. Refuse to start instead.
+	if err := g.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("injection guard at %s is not ready: %w", cfg.GuardURL, err)
+	}
+
 	return &RetrievingResponder{
 		Inner:     inner,
 		Embedder:  embedder,
 		Store:     store,
 		Condenser: inner,
 		Warm:      inner,
+		Guard:     g,
 		TopK:      cfg.TopK,
 		MinScore:  float32(cfg.MinScore),
 		Floor:     cfg.Floor,
