@@ -51,7 +51,8 @@ type RetrievingResponder struct {
 }
 
 func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
-	msgs := req.GetMessages()
+	msgs := withoutRefusals(req.GetMessages())
+	req = &chatpb.ChatRequest{Messages: msgs}
 
 	// Retrieval runs while the guard checks, so the guard costs no latency.
 	groundCtx, cancelGround := context.WithCancel(ctx)
@@ -92,13 +93,7 @@ func (r *RetrievingResponder) flagged(ctx context.Context, msgs []*chatpb.Messag
 	if r.Guard == nil {
 		return false
 	}
-	var texts []string
-	for _, m := range msgs {
-		if m.GetRole() == chatpb.Role_ROLE_USER {
-			texts = append(texts, m.GetContent())
-		}
-	}
-	v, err := r.Guard.Check(ctx, texts)
+	v, err := r.Guard.Check(ctx, unanswered(msgs))
 	log := obs.LogWithTrace(ctx, slog.Default())
 	switch {
 	case err != nil && ctx.Err() == nil:
@@ -107,6 +102,37 @@ func (r *RetrievingResponder) flagged(ctx context.Context, msgs []*chatpb.Messag
 		log.Info("injection guard flagged a turn", "score", v.Score)
 	}
 	return err == nil && v.Flagged
+}
+
+// unanswered is the user turns no reply follows. The handler keeps only signed
+// replies, so an answered turn was screened when it was the newest; orphans,
+// from a stopped reply or a crafted history, never were.
+func unanswered(msgs []*chatpb.Message) []string {
+	var texts []string
+	for i, m := range msgs {
+		if m.GetRole() != chatpb.Role_ROLE_USER {
+			continue
+		}
+		if i+1 == len(msgs) || msgs[i+1].GetRole() != chatpb.Role_ROLE_ASSISTANT {
+			texts = append(texts, m.GetContent())
+		}
+	}
+	return texts
+}
+
+// withoutRefusals drops each refused exchange, so one flagged message neither
+// reaches the model later nor locks the visitor out of the conversation.
+func withoutRefusals(msgs []*chatpb.Message) []*chatpb.Message {
+	out := make([]*chatpb.Message, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		if i+1 < len(msgs) && msgs[i].GetRole() == chatpb.Role_ROLE_USER &&
+			msgs[i+1].GetRole() == chatpb.Role_ROLE_ASSISTANT && msgs[i+1].GetContent() == guardRefusal {
+			i++
+			continue
+		}
+		out = append(out, msgs[i])
+	}
+	return out
 }
 
 // Warmup readies both models a turn needs. The probe text is irrelevant;
