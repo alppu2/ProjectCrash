@@ -1,0 +1,11 @@
+# Deterministic red-team suite. Run against the live stack (RESPONDER=llm):
+#   npx promptfoo eval -c evals/redteam/promptfooconfig.yaml
+# structural.yaml must pass 100%; behaviour.yaml records a baseline.
+description: ProjectCrash chat red-team
+prompts:
+  - '{{question}}'
+providers:
+  - id: file://provider.ts
+tests:
+  - file://structural.yaml
+  - file://behaviour.yaml
