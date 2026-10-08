@@ -15,7 +15,7 @@ live in `docs/superpowers/specs/`.
 | 2 | Horizontal scaling + load testing | Done; order/inventory path now parked |
 | 3 | LLM feature in the product | Done, as a portfolio assistant |
 | 4 | RAG over the portfolio | In progress |
-| 5 | LLM security | Not started |
+| 5 | LLM security | In progress |
 | 6 | Web security | Not started |
 | 7 | Terraform + going live | In progress |
 | 8 | Eval set | Not started |
@@ -83,16 +83,25 @@ Remaining:
 - Citations surfaced in the frontend
 - Prompt caching on the fixed system prompt, once on a provider that supports it
 
-## Next
-
 ### 5. LLM security
 The top risk for a bot that represents a real person: a visitor makes it say
 something false or embarrassing and screenshots it.
-- Prompt injection: a system prompt that answers only from sources and refuses
-  role-play and instruction overrides
-- Forged assistant turns: the stateless server trusts client-sent history, so
-  assistant messages must be validated or stripped
-- Red-team the bot with adversarial questions, kept for the eval set
+
+Shipped:
+- Signed history: replies carry an HMAC bound to their question; forged or
+  unsigned assistant turns are dropped before the model sees them
+- Prompt Guard 2 classifier in its own container, in parallel with retrieval;
+  flagged turns get a fixed refusal
+- Spotlighted sources, scope rules (no opinions or commitments on his behalf,
+  no role-play), honest AI-assisted attribution
+- Specs and CLAUDE.md out of the index: historical records read as current
+- promptfoo red-team suite in `evals/redteam/`
+
+Remaining:
+- First live run: verify TEI serves the gated model, record the red-team
+  baseline on llama3.2:3b, re-ingest to sweep the dropped docs
+
+## Next
 
 ### 6. Web security
 Classic abuse and cost controls for an unauthenticated endpoint.
