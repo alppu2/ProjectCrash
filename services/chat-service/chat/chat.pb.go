@@ -71,9 +71,12 @@ func (Role) EnumDescriptor() ([]byte, []int) {
 }
 
 type Message struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Role          Role                   `protobuf:"varint,1,opt,name=role,proto3,enum=chat.v1.Role" json:"role,omitempty"`
-	Content       string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Role    Role                   `protobuf:"varint,1,opt,name=role,proto3,enum=chat.v1.Role" json:"role,omitempty"`
+	Content string                 `protobuf:"bytes,2,opt,name=content,proto3" json:"content,omitempty"`
+	// Set on assistant turns from Done.signature. The server drops assistant
+	// turns whose signature does not verify.
+	Signature     []byte `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -120,6 +123,13 @@ func (x *Message) GetContent() string {
 		return x.Content
 	}
 	return ""
+}
+
+func (x *Message) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
 }
 
 type ChatRequest struct {
@@ -254,6 +264,7 @@ type Done struct {
 	StopReason    string                 `protobuf:"bytes,1,opt,name=stop_reason,json=stopReason,proto3" json:"stop_reason,omitempty"`
 	InputTokens   int32                  `protobuf:"varint,2,opt,name=input_tokens,json=inputTokens,proto3" json:"input_tokens,omitempty"`
 	OutputTokens  int32                  `protobuf:"varint,3,opt,name=output_tokens,json=outputTokens,proto3" json:"output_tokens,omitempty"`
+	Signature     []byte                 `protobuf:"bytes,4,opt,name=signature,proto3" json:"signature,omitempty"` // HMAC over this reply and the question it answered
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -307,6 +318,13 @@ func (x *Done) GetOutputTokens() int32 {
 		return x.OutputTokens
 	}
 	return 0
+}
+
+func (x *Done) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
 }
 
 // Empty for now; room for e.g. a model id without a new RPC.
@@ -387,22 +405,24 @@ var File_chat_proto protoreflect.FileDescriptor
 const file_chat_proto_rawDesc = "" +
 	"\n" +
 	"\n" +
-	"chat.proto\x12\achat.v1\"F\n" +
+	"chat.proto\x12\achat.v1\"d\n" +
 	"\aMessage\x12!\n" +
 	"\x04role\x18\x01 \x01(\x0e2\r.chat.v1.RoleR\x04role\x12\x18\n" +
-	"\acontent\x18\x02 \x01(\tR\acontent\";\n" +
+	"\acontent\x18\x02 \x01(\tR\acontent\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\fR\tsignature\";\n" +
 	"\vChatRequest\x12,\n" +
 	"\bmessages\x18\x01 \x03(\v2\x10.chat.v1.MessageR\bmessages\"Z\n" +
 	"\tChatChunk\x12\x1f\n" +
 	"\n" +
 	"text_delta\x18\x01 \x01(\tH\x00R\ttextDelta\x12#\n" +
 	"\x04done\x18\x02 \x01(\v2\r.chat.v1.DoneH\x00R\x04doneB\a\n" +
-	"\x05event\"o\n" +
+	"\x05event\"\x8d\x01\n" +
 	"\x04Done\x12\x1f\n" +
 	"\vstop_reason\x18\x01 \x01(\tR\n" +
 	"stopReason\x12!\n" +
 	"\finput_tokens\x18\x02 \x01(\x05R\vinputTokens\x12#\n" +
-	"\routput_tokens\x18\x03 \x01(\x05R\foutputTokens\"\x0f\n" +
+	"\routput_tokens\x18\x03 \x01(\x05R\foutputTokens\x12\x1c\n" +
+	"\tsignature\x18\x04 \x01(\fR\tsignature\"\x0f\n" +
 	"\rWarmupRequest\"\x10\n" +
 	"\x0eWarmupResponse*?\n" +
 	"\x04Role\x12\x14\n" +
