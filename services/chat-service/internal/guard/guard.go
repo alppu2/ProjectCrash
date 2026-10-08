@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Verdict is the worst window across every text in one Check.
@@ -24,11 +25,12 @@ type Guard interface {
 	Check(ctx context.Context, texts []string) (Verdict, error)
 }
 
-// Windows stay under Prompt Guard's 512 tokens even at two tokens per rune,
-// and overlap by half so an attack straddling a boundary is whole in one.
+// Windows are budgeted in bytes because no token covers less than one, so even
+// byte-fallback text stays under Prompt Guard's 512 tokens. They overlap by
+// half so an attack straddling a boundary is whole in one.
 const (
-	windowRunes = 500
-	strideRunes = 250
+	windowBytes = 500
+	strideBytes = 250
 	// TEI's default --max-client-batch-size.
 	maxBatch     = 32
 	checkTimeout = 5 * time.Second
@@ -87,19 +89,25 @@ func (g *TEIGuard) check(ctx context.Context, texts []string) (Verdict, error) {
 	return Verdict{Flagged: worst >= g.Threshold, Score: worst}, nil
 }
 
-// windows splits on runes: a byte split can cut a character in half, and TEI
-// rejects the whole batch over one invalid UTF-8 input.
+// windows cuts only on rune boundaries: a split character is invalid UTF-8,
+// and TEI rejects the whole batch over one invalid input.
 func windows(text string) []string {
-	r := []rune(text)
-	if len(r) == 0 {
+	if text == "" {
 		return nil
 	}
 	var out []string
-	for start := 0; ; start += strideRunes {
-		end := min(start+windowRunes, len(r))
-		out = append(out, string(r[start:end]))
-		if end == len(r) {
+	for start := 0; ; {
+		end := min(start+windowBytes, len(text))
+		for end < len(text) && !utf8.RuneStart(text[end]) {
+			end--
+		}
+		out = append(out, text[start:end])
+		if end == len(text) {
 			return out
+		}
+		start += strideBytes
+		for !utf8.RuneStart(text[start]) {
+			start--
 		}
 	}
 }
