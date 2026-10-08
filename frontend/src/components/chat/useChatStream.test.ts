@@ -6,7 +6,7 @@ import useChatStream, {
   trimHistory,
   type ChatMessage,
 } from './useChatStream';
-import { ChatChunk, Role } from '../../gen/chat_pb';
+import { ChatChunk, Done, Role } from '../../gen/chat_pb';
 import { chatClient } from '../../api';
 
 // api.ts points at Envoy on :8080. Only chat() is stubbed, so accumulation,
@@ -116,6 +116,43 @@ describe('trimHistory', () => {
 });
 
 describe('useChatStream', () => {
+  // Without the signature the server drops the reply from history, so every
+  // follow-up loses the context it refers back to.
+  it('sends each reply back with the signature from its done frame', async () => {
+    const signature = new Uint8Array([1, 2, 3]);
+    const requests: {
+      role?: Role;
+      content?: string;
+      signature?: Uint8Array;
+    }[][] = [];
+    mockChat.mockImplementation((req) => {
+      requests.push(req.messages ?? []);
+      return (async function* () {
+        yield deltaChunk('reply');
+        yield new ChatChunk({
+          event: {
+            case: 'done',
+            value: new Done({ stopReason: 'end_turn', signature }),
+          },
+        });
+      })();
+    });
+
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('first');
+    });
+    await act(async () => {
+      await result.current.send('second');
+    });
+
+    expect(requests[1][1]).toMatchObject({
+      role: Role.ASSISTANT,
+      content: 'reply',
+      signature,
+    });
+  });
+
   beforeEach(() => {
     mockChat.mockReset();
   });
