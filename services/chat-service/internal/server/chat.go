@@ -25,11 +25,11 @@ type chatServer struct {
 	signer    *history.Signer
 }
 
-// New returns the ChatService handler for r.
-func New(r responder.Responder) chatpb.ChatServiceServer {
+// New returns the ChatService handler for r, signing replies with signer.
+func New(r responder.Responder, signer *history.Signer) chatpb.ChatServiceServer {
 	// Echo has no Warmer, so the assertion leaves warmer nil.
 	warmer, _ := r.(responder.Warmer)
-	return &chatServer{responder: r, warmer: warmer, signer: history.NewSigner()}
+	return &chatServer{responder: r, warmer: warmer, signer: signer}
 }
 
 // Chat records exactly one chatStreamsTotal increment and one

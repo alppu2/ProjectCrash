@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strconv"
 	"time"
 
+	"chat-service/internal/history"
 	"chat-service/internal/responder"
 )
 
@@ -84,6 +87,26 @@ func loadConfig() (responder.Config, error) {
 		return responder.Config{}, fmt.Errorf("GUARD_THRESHOLD=%v must be strictly between 0 and 1: 0 flags every turn, 1 none", cfg.GuardThreshold)
 	}
 	return cfg, nil
+}
+
+// newSigner reads HISTORY_KEY, which every replica must share. Unset falls back
+// to a per-process key: fine for one instance, broken history behind several.
+// Errors never quote the value.
+func newSigner() (*history.Signer, error) {
+	raw := os.Getenv("HISTORY_KEY")
+	if raw == "" {
+		slog.Info("HISTORY_KEY unset, signing with a per-process key")
+		return history.NewSigner(), nil
+	}
+	key, err := hex.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("HISTORY_KEY is not hex; generate one with openssl rand -hex 32")
+	}
+	s, err := history.NewSignerWithKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("HISTORY_KEY: %w", err)
+	}
+	return s, nil
 }
 
 // echoDelay reads ECHO_DELAY_MS. Set it to 0 for load tests without

@@ -3,10 +3,12 @@
 package history
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"hash"
 
 	chatpb "chat-service/chat"
@@ -19,12 +21,24 @@ type Signer struct {
 	key []byte
 }
 
+// MinKeyLen matches SHA-256's output; a shorter HMAC key weakens the MAC.
+const MinKeyLen = 32
+
 // NewSigner draws a per-process key. A restart invalidates every signature,
 // which only costs open conversations their earlier context.
 func NewSigner() *Signer {
-	key := make([]byte, 32)
+	key := make([]byte, MinKeyLen)
 	rand.Read(key) // crashes the program rather than returning an error since Go 1.24
 	return &Signer{key: key}
+}
+
+// NewSignerWithKey uses a shared key, so replicas verify each other's replies
+// and a restart keeps open conversations intact.
+func NewSignerWithKey(key []byte) (*Signer, error) {
+	if len(key) < MinKeyLen {
+		return nil, fmt.Errorf("history key is %d bytes, want at least %d", len(key), MinKeyLen)
+	}
+	return &Signer{key: bytes.Clone(key)}, nil
 }
 
 // Sign binds a reply to the question it answered.

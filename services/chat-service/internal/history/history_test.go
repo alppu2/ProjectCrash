@@ -82,3 +82,27 @@ func TestVerifyKeepsUserTurnsAroundDroppedReplies(t *testing.T) {
 		t.Errorf("kept = %v, want both user turns in order", kept)
 	}
 }
+
+// Replicas behind round-robin share one key; if two signers built from it
+// disagreed, every other turn would silently lose its history.
+func TestSignersFromOneKeyVerifyEachOther(t *testing.T) {
+	key := bytes.Repeat([]byte{7}, MinKeyLen)
+	a, err := NewSignerWithKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := NewSignerWithKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []*chatpb.Message{user("q"), assistant("r", a.Sign("q", "r")), user("q2")}
+	if _, dropped := b.Verify(msgs); len(dropped) != 0 {
+		t.Errorf("dropped = %v, want a reply signed by a verified by b", dropped)
+	}
+}
+
+func TestNewSignerWithKeyRejectsShortKeys(t *testing.T) {
+	if _, err := NewSignerWithKey(make([]byte, MinKeyLen-1)); err == nil {
+		t.Error("NewSignerWithKey(short) error = nil, want an error")
+	}
+}

@@ -330,3 +330,29 @@ func TestNewResponderRejectsMalformedQdrantURL(t *testing.T) {
 		})
 	}
 }
+
+func TestNewSigner(t *testing.T) {
+	const secret = "zz" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab"
+	tests := []struct {
+		name    string
+		key     string
+		wantErr bool
+	}{
+		{"unset draws a per-process key", "", false},
+		{"64 hex characters", strings.Repeat("ab", 32), false},
+		{"not hex", secret, true},
+		{"too short", strings.Repeat("ab", 16), true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("HISTORY_KEY", tt.key)
+			_, err := newSigner()
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("newSigner() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && (!strings.Contains(err.Error(), "HISTORY_KEY") || strings.Contains(err.Error(), tt.key)) {
+				t.Errorf("error = %q, want it to name HISTORY_KEY and omit the value", err)
+			}
+		})
+	}
+}

@@ -58,7 +58,12 @@ func main() {
 		slog.Error("failed to build responder", "error", err)
 		os.Exit(1)
 	}
-	chatpb.RegisterChatServiceServer(grpcServer, server.New(resp))
+	signer, err := newSigner()
+	if err != nil {
+		slog.Error("failed to build history signer", "error", err)
+		os.Exit(1)
+	}
+	chatpb.RegisterChatServiceServer(grpcServer, server.New(resp, signer))
 
 	slog.Info("chat service listening", "port", grpcPort)
 	if err := grpcServer.Serve(lis); err != nil {

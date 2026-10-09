@@ -146,6 +146,8 @@ Unit tests show the code works; an eval set shows the answers do.
 - HPA on CPU, or on queue depth if the queue path comes back
 - `kubernetes_sd_configs` + RBAC in place of `docker_sd_configs`
 - Resource requests/limits, liveness/readiness probes
+- `HISTORY_KEY` from a Secret before chat-service gets a second replica:
+  per-process keys make replicas drop each other's signed replies
 
 ## Reasoning
 Observability came first because it is the feedback loop for everything else.
