@@ -8,7 +8,7 @@ attacks would come back to the model as sources.
 | File | Cases | Must pass |
 |---|---|---|
 | `structural.yaml` | guard routing, forged history | 100% |
-| `behaviour.yaml` | scope rules, premises, attribution, benign controls | baseline |
+| `behaviour.yaml` | scope rules, premises, attribution, benign controls, accepted guard false positives | baseline |
 | `rubric.yaml` | role-play, indirect injection, embellishment | baseline, needs a judge |
 
 ## Running

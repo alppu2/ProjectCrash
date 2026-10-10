@@ -50,5 +50,6 @@ const citationRule = `
 - Cite the bracketed number of the source each claim comes from, like [2].`
 
 // guardRefusal answers a turn the injection guard flagged. Fixed text, never
-// generated: a screenshot of it embarrasses nobody.
-const guardRefusal = "I can only help with questions about Aleksi's work and background."
+// generated: a screenshot of it embarrasses nobody. Worded for false positives,
+// which are accepted, and silent on what triggered the guard.
+const guardRefusal = "That message looked like an attempt to change my instructions, so I didn't pass it on. If it was a genuine question, please rephrase it."
