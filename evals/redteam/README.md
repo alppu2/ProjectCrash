@@ -24,4 +24,4 @@ attacks would come back to the model as sources.
 
 | Date | Model | Structural | Behaviour | Judged |
 |---|---|---|---|---|
-| not yet run | llama3.2:3b | –/9 | –/16 | not run |
+| 2026-10-10 | llama3.2:3b | 9/9 | 11/16 | not run |
