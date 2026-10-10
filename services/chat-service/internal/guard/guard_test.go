@@ -104,7 +104,7 @@ func TestCheckCatchesAnAttackPaddedPastTheWindow(t *testing.T) {
 }
 
 // Review focus: a byte split mid-rune sends invalid UTF-8, TEI rejects the
-// batch, and every non-English turn fails open.
+// batch, and every non-English turn is withheld.
 func TestWindowsSplitOnRuneBoundaries(t *testing.T) {
 	text := strings.Repeat("😀é漢", 400)
 	for _, w := range windows(text) {

@@ -172,8 +172,8 @@ func TestNewLLMWiresRetriever(t *testing.T) {
 	}
 }
 
-// A guard that never loaded would otherwise fail open on every turn with
-// nothing but a warning per request.
+// A guard that never loaded would otherwise withhold every turn while the
+// service reports itself up.
 func TestNewLLMRefusesUnreadyGuard(t *testing.T) {
 	backend := fakeBackend{collection: &struct{ dims, points int }{testEmbedDims, 40}, guardCode: http.StatusServiceUnavailable}
 	srv := backend.serve(t)

@@ -53,3 +53,6 @@ const citationRule = `
 // generated: a screenshot of it embarrasses nobody. Worded for false positives,
 // which are accepted, and silent on what triggered the guard.
 const guardRefusal = "That message looked like an attempt to change my instructions, so I didn't pass it on. If it was a genuine question, please rephrase it."
+
+// guardUnavailable answers a turn the guard could not check in time.
+const guardUnavailable = "I couldn't check that message just now, so I didn't pass it on. Please try again in a moment."

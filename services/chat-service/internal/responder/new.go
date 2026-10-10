@@ -108,8 +108,8 @@ func newRetriever(ctx context.Context, cfg Config, inner *OpenAIResponder) (*Ret
 		Threshold: float32(cfg.GuardThreshold),
 		HTTP:      &http.Client{Timeout: 10 * time.Second},
 	}
-	// Per-turn guard failures fail open, so a guard that never loaded would go
-	// unnoticed. Refuse to start instead.
+	// A guard that never loaded would withhold every turn, an outage that looks
+	// like a running service. Refuse to start instead.
 	if err := g.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("injection guard at %s is not ready: %w", cfg.GuardURL, err)
 	}

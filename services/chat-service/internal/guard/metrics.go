@@ -14,7 +14,7 @@ var (
 
 	chatGuardChecksTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "chat_guard_checks_total",
-		Help: "Guard checks by verdict. \"error\" turns proceed unguarded; client hang-ups are not counted.",
+		Help: "Guard checks by verdict. \"error\" turns are withheld from the model; client hang-ups are not counted.",
 	}, []string{"verdict"})
 
 	chatGuardDuration = promauto.NewHistogram(prometheus.HistogramOpts{

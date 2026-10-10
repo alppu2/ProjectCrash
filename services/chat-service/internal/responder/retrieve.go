@@ -67,12 +67,15 @@ func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatReques
 		done <- grounded{system, err}
 	}()
 
-	if r.flagged(ctx, msgs) {
+	if reply, stop, err := r.screen(ctx, msgs); err != nil || reply != "" {
 		cancelGround()
-		if err := emit(guardRefusal); err != nil {
+		if err != nil {
 			return Usage{}, err
 		}
-		return Usage{StopReason: "guarded"}, nil
+		if err := emit(reply); err != nil {
+			return Usage{}, err
+		}
+		return Usage{StopReason: stop}, nil
 	}
 
 	g := <-done
@@ -88,20 +91,27 @@ func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatReques
 	return r.Inner.withSystem(system).Stream(ctx, req, emit)
 }
 
-// flagged fails open: signing and the prompt still hold when the guard is down.
-func (r *RetrievingResponder) flagged(ctx context.Context, msgs []*chatpb.Message) bool {
+// screen returns the fixed reply for a turn that must not reach the model, or
+// "" to let it through. It fails closed: the guard times out under load, and
+// failing open would let a flood of requests carry an attack past it.
+func (r *RetrievingResponder) screen(ctx context.Context, msgs []*chatpb.Message) (reply, stop string, err error) {
 	if r.Guard == nil {
-		return false
+		return "", "", nil
 	}
 	v, err := r.Guard.Check(ctx, unanswered(msgs))
 	log := obs.LogWithTrace(ctx, slog.Default())
 	switch {
-	case err != nil && ctx.Err() == nil:
-		log.Warn("injection guard unavailable, continuing unguarded", "error", err)
+	case err != nil && ctx.Err() != nil:
+		// Bare, so classifyOutcome sees a hangup rather than a guard failure.
+		return "", "", ctx.Err()
+	case err != nil:
+		log.Warn("injection guard unavailable, withholding the turn", "error", err)
+		return guardUnavailable, "guard_unavailable", nil
 	case v.Flagged:
 		log.Info("injection guard flagged a turn", "score", v.Score)
+		return guardRefusal, "guarded", nil
 	}
-	return err == nil && v.Flagged
+	return "", "", nil
 }
 
 // unanswered is the user turns no reply follows. The handler keeps only signed
@@ -120,13 +130,15 @@ func unanswered(msgs []*chatpb.Message) []string {
 	return texts
 }
 
-// withoutRefusals drops each refused exchange, so one flagged message neither
-// reaches the model later nor locks the visitor out of the conversation.
+// withoutRefusals drops each exchange screen withheld, so one flagged message
+// neither locks the visitor out nor, signed as answered, reaches the model later
+// unchecked.
 func withoutRefusals(msgs []*chatpb.Message) []*chatpb.Message {
 	out := make([]*chatpb.Message, 0, len(msgs))
 	for i := 0; i < len(msgs); i++ {
 		if i+1 < len(msgs) && msgs[i].GetRole() == chatpb.Role_ROLE_USER &&
-			msgs[i+1].GetRole() == chatpb.Role_ROLE_ASSISTANT && msgs[i+1].GetContent() == guardRefusal {
+			msgs[i+1].GetRole() == chatpb.Role_ROLE_ASSISTANT &&
+			(msgs[i+1].GetContent() == guardRefusal || msgs[i+1].GetContent() == guardUnavailable) {
 			i++
 			continue
 		}
