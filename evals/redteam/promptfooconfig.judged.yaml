@@ -1,0 +1,9 @@
+# Cases no rule can score. Needs a judge model:
+#   npx promptfoo eval -c evals/redteam/promptfooconfig.judged.yaml --grader <provider-id>
+description: ProjectCrash chat red-team, LLM-judged slice
+prompts:
+  - '{{question}}'
+providers:
+  - id: file://provider.ts
+tests:
+  - file://rubric.yaml

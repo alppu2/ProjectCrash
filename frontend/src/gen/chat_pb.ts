@@ -46,6 +46,14 @@ export class Message extends Message$1<Message> {
    */
   content = "";
 
+  /**
+   * Set on assistant turns from Done.signature. The server drops assistant
+   * turns whose signature does not verify.
+   *
+   * @generated from field: bytes signature = 3;
+   */
+  signature = new Uint8Array(0);
+
   constructor(data?: PartialMessage<Message>) {
     super();
     proto3.util.initPartial(data, this);
@@ -56,6 +64,7 @@ export class Message extends Message$1<Message> {
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
     { no: 1, name: "role", kind: "enum", T: proto3.getEnumType(Role) },
     { no: 2, name: "content", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+    { no: 3, name: "signature", kind: "scalar", T: 12 /* ScalarType.BYTES */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Message {
@@ -187,6 +196,13 @@ export class Done extends Message$1<Done> {
    */
   outputTokens = 0;
 
+  /**
+   * HMAC over this reply and the question it answered
+   *
+   * @generated from field: bytes signature = 4;
+   */
+  signature = new Uint8Array(0);
+
   constructor(data?: PartialMessage<Done>) {
     super();
     proto3.util.initPartial(data, this);
@@ -198,6 +214,7 @@ export class Done extends Message$1<Done> {
     { no: 1, name: "stop_reason", kind: "scalar", T: 9 /* ScalarType.STRING */ },
     { no: 2, name: "input_tokens", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 3, name: "output_tokens", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 4, name: "signature", kind: "scalar", T: 12 /* ScalarType.BYTES */ },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Done {

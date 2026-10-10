@@ -16,6 +16,7 @@ Each service needs a `.env` before compose will start it — `docker compose` us
 
 ```bash
 cp services/chat-service/.env.example services/chat-service/.env   # order/inventory-service too, when restored
+cp infra/guard/.env.example infra/guard/.env   # HF_TOKEN; accept the Llama license on the model page first
 ```
 
 Stack:
@@ -24,6 +25,7 @@ Stack:
 docker compose up --build                              # RESPONDER=echo: no model, no GPU
 docker compose --profile llm up --build -d             # + ollama, qdrant; needs RESPONDER=llm
 docker compose run --rm ingest                         # build/refresh the retrieval index; --full re-embeds all
+npx promptfoo eval -c evals/redteam/promptfooconfig.yaml   # red-team suite, stack up with --profile llm
 docker compose logs -f chat-service
 ```
 
@@ -52,7 +54,7 @@ npm run format     # prettier --write src/
 `npm run format:check` fails on files this repo has never formatted — check
 whether a warning predates your change before reformatting anything.
 
-Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin), Prometheus `:9090`, Tempo `:3200`, Loki `:3100`. Ollama and Qdrant publish no host port (unauthenticated APIs); use `docker compose exec`. Restoring the order path adds RabbitMQ management `:15672`, MongoDB `:27017` and inventory-service metrics `:9092`.
+Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin), Prometheus `:9090`, Tempo `:3200`, Loki `:3100`. Ollama, Qdrant and the guard publish no host port (unauthenticated APIs); use `docker compose exec`. Restoring the order path adds RabbitMQ management `:15672`, MongoDB `:27017` and inventory-service metrics `:9092`.
 
 ## Protobuf codegen
 
@@ -73,7 +75,9 @@ Changing a proto means regenerating both sides and committing the output.
 
 **Chat streaming.** `chat.proto`'s `Chat` is a server-streaming RPC emitting `ChatChunk` frames (`text_delta`… then a terminal `done`). The server is stateless: the client sends full conversation history each turn (`useChatStream.ts` caps it at `MAX_HISTORY`, `internal/server/chat.go` enforces hard server-side limits since the endpoint is unauthenticated). The unary `Warmup`, called on page load by `useWarmup.ts`, readies the provider before the first turn; `RetrievingResponder` shares one in-flight warmup and reuses a success for 20 minutes (`internal/responder/warmup.go`), and echo has nothing to warm. `Responder` in `services/chat-service/internal/responder/responder.go` is the provider seam, chosen by `RESPONDER` in `responder.New`: `echo` (`EchoResponder`, zero-cost, replays the last user message) or `llm` (`RetrievingResponder` wrapping `OpenAIResponder`, for any OpenAI-compatible provider — Ollama locally, a hosted endpoint by changing `LLM_BASE_URL`/`LLM_API_KEY`). A new provider should not touch the RPC handler.
 
-**Retrieval.** `RetrievingResponder` condenses follow-ups into a standalone question, embeds it, searches Qdrant with a reserved background floor, and grounds the turn; below `RETRIEVAL_MIN_SCORE` nothing reaches the model. The index is built by `services/chat-service/cmd/ingest` (the `ingest` compose service) over the repo itself, incremental by content hash. The collection name is derived from the embedding model and its dimension, so changing `EMBED_MODEL` means re-ingesting.
+**Retrieval.** `RetrievingResponder` condenses follow-ups into a standalone question, embeds it, searches Qdrant with a reserved background floor, and grounds the turn; below `RETRIEVAL_MIN_SCORE` nothing reaches the model. The index is built by `services/chat-service/cmd/ingest` (the `ingest` compose service) over the allowlisted parts of the repo (source, `proto/`, `corpus/`, `README.md`, `docs/roadmap.md`), incremental by content hash; a file leaving the allowlist is swept from the index on the next run. The collection name is derived from the embedding model and its dimension, so changing `EMBED_MODEL` means re-ingesting.
+
+**LLM security.** The handler signs every reply (`internal/history`; key from `HISTORY_KEY`, which replicas must share, else per-process) and drops assistant turns whose signature does not match the user turn before them, so client-sent history cannot put words in the model's mouth; dropping, not rejecting, because a stopped reply is never signed. `RetrievingResponder` runs the Prompt Guard 2 classifier (`guard` container, `internal/guard`) in parallel with retrieval over the user turns no signed reply has answered (the newest, plus orphans); a flagged turn gets the fixed `guardRefusal` and never reaches the model, and a refused exchange is dropped from later turns so one flagged message does not lock the visitor out. The guard fails closed: a turn it cannot check in time gets the fixed `guardUnavailable` and is dropped like a refusal, since under load a fail-open guard lets a flood of requests carry an attack past it. It is also required at startup. `evals/redteam/` holds the promptfoo suite and must stay outside the ingest allowlist.
 
 **`internal/rag/sources.go` is the security boundary.** Its allowlist decides what text unauthenticated visitors can get quoted back. Add paths deliberately, never widen to a denylist, and keep `TestWalkNeverSelectsSecrets` passing; personal material goes in gitignored `corpus/`.
 

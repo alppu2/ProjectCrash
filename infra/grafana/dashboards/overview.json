@@ -83,6 +83,53 @@
           "refId": "A"
         }
       ]
+    },
+    {
+      "id": 6,
+      "title": "Chat Guard Verdicts (per minute)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (verdict) (rate(chat_guard_checks_total[5m])) * 60",
+          "legendFormat": "{{verdict}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Chat History Turns Dropped (per minute)",
+      "type": "timeseries",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "sum by (reason) (rate(chat_history_dropped_total[5m])) * 60",
+          "legendFormat": "{{reason}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Chat Guard Scores (checks per band, dashboard range)",
+      "description": "Worst injection probability per checked turn, observed before GUARD_THRESHOLD: the evidence the threshold is tuned from.",
+      "type": "bargauge",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "options": {"orientation": "vertical", "displayMode": "basic", "showUnfilled": false},
+      "fieldConfig": {"defaults": {"unit": "none", "decimals": 0, "min": 0}},
+      "targets": [
+        {
+          "expr": "sum by (le) (increase(chat_guard_score_bucket[$__range]))",
+          "format": "heatmap",
+          "instant": true,
+          "legendFormat": "{{le}}",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "templating": {"list": []},

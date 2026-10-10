@@ -1,7 +1,11 @@
 {
   "devDependencies": {
     "@bufbuild/buf": "^1.69.0",
+    "@bufbuild/protobuf": "^1.10.0",
     "@bufbuild/protoc-gen-es": "^1.10.1",
-    "@connectrpc/protoc-gen-connect-es": "^1.7.0"
+    "@connectrpc/connect": "^1.4.0",
+    "@connectrpc/connect-node": "^1.4.0",
+    "@connectrpc/protoc-gen-connect-es": "^1.7.0",
+    "promptfoo": "^0.124.1"
   }
 }

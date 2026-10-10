@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/guard"
 	"chat-service/internal/obs"
 	"chat-service/internal/rag"
 )
@@ -40,6 +42,7 @@ type RetrievingResponder struct {
 	Store     searcher
 	Condenser condenser
 	Warm      warmer
+	Guard     guard.Guard // nil: unguarded, as in tests that predate it
 	TopK      int
 	MinScore  float32
 	Floor     int
@@ -48,16 +51,100 @@ type RetrievingResponder struct {
 }
 
 func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, emit func(delta string) error) (Usage, error) {
-	system, err := r.ground(ctx, req.GetMessages())
-	if err != nil {
+	msgs := withoutRefusals(req.GetMessages())
+	req = &chatpb.ChatRequest{Messages: msgs}
+
+	// Retrieval runs while the guard checks, so the guard costs no latency.
+	groundCtx, cancelGround := context.WithCancel(ctx)
+	defer cancelGround()
+	type grounded struct {
+		system string
+		err    error
+	}
+	done := make(chan grounded, 1)
+	go func() {
+		system, err := r.ground(groundCtx, msgs)
+		done <- grounded{system, err}
+	}()
+
+	if reply, stop, err := r.screen(ctx, msgs); err != nil || reply != "" {
+		cancelGround()
+		if err != nil {
+			return Usage{}, err
+		}
+		if err := emit(reply); err != nil {
+			return Usage{}, err
+		}
+		return Usage{StopReason: stop}, nil
+	}
+
+	g := <-done
+	system := g.system
+	if g.err != nil {
 		// Bare, so classifyOutcome sees a hangup rather than a dead provider.
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Usage{}, ctxErr
 		}
-		obs.LogWithTrace(ctx, slog.Default()).Warn("retrieval unavailable, degrading the reply", "error", err)
+		obs.LogWithTrace(ctx, slog.Default()).Warn("retrieval unavailable, degrading the reply", "error", g.err)
 		system = unavailableEnvelope
 	}
 	return r.Inner.withSystem(system).Stream(ctx, req, emit)
+}
+
+// screen returns the fixed reply for a turn that must not reach the model, or
+// "" to let it through. It fails closed: the guard times out under load, and
+// failing open would let a flood of requests carry an attack past it.
+func (r *RetrievingResponder) screen(ctx context.Context, msgs []*chatpb.Message) (reply, stop string, err error) {
+	if r.Guard == nil {
+		return "", "", nil
+	}
+	v, err := r.Guard.Check(ctx, unanswered(msgs))
+	log := obs.LogWithTrace(ctx, slog.Default())
+	switch {
+	case err != nil && ctx.Err() != nil:
+		// Bare, so classifyOutcome sees a hangup rather than a guard failure.
+		return "", "", ctx.Err()
+	case err != nil:
+		log.Warn("injection guard unavailable, withholding the turn", "error", err)
+		return guardUnavailable, "guard_unavailable", nil
+	case v.Flagged:
+		log.Info("injection guard flagged a turn", "score", v.Score)
+		return guardRefusal, "guarded", nil
+	}
+	return "", "", nil
+}
+
+// unanswered is the user turns no reply follows. The handler keeps only signed
+// replies, so an answered turn was screened when it was the newest; orphans,
+// from a stopped reply or a crafted history, never were.
+func unanswered(msgs []*chatpb.Message) []string {
+	var texts []string
+	for i, m := range msgs {
+		if m.GetRole() != chatpb.Role_ROLE_USER {
+			continue
+		}
+		if i+1 == len(msgs) || msgs[i+1].GetRole() != chatpb.Role_ROLE_ASSISTANT {
+			texts = append(texts, m.GetContent())
+		}
+	}
+	return texts
+}
+
+// withoutRefusals drops each exchange screen withheld, so one flagged message
+// neither locks the visitor out nor, signed as answered, reaches the model later
+// unchecked.
+func withoutRefusals(msgs []*chatpb.Message) []*chatpb.Message {
+	out := make([]*chatpb.Message, 0, len(msgs))
+	for i := 0; i < len(msgs); i++ {
+		if i+1 < len(msgs) && msgs[i].GetRole() == chatpb.Role_ROLE_USER &&
+			msgs[i+1].GetRole() == chatpb.Role_ROLE_ASSISTANT &&
+			(msgs[i+1].GetContent() == guardRefusal || msgs[i+1].GetContent() == guardUnavailable) {
+			i++
+			continue
+		}
+		out = append(out, msgs[i])
+	}
+	return out
 }
 
 // Warmup readies both models a turn needs. The probe text is irrelevant;
@@ -102,7 +189,7 @@ func (r *RetrievingResponder) ground(ctx context.Context, msgs []*chatpb.Message
 		// is the honest answer to a question the corpus cannot answer.
 		return corpusEnvelope, nil
 	}
-	return corpusEnvelope + citationRule + "\n\n" + assemblePrompt(hits), nil
+	return corpusEnvelope + citationRule + "\n\n" + assemblePrompt(hits) + "\n" + sourcesReminder, nil
 }
 
 // query folds history into a standalone question. A follow-up carries its
@@ -171,14 +258,21 @@ func bestScore(hits []rag.Hit) float32 {
 	return best
 }
 
+// sourcesTag matches the spotlight delimiters in any case or spacing, so a
+// chunk cannot close the block early.
+var sourcesTag = regexp.MustCompile(`(?i)<\s*/?\s*sources\s*>`)
+
 // assemblePrompt numbers the surviving chunks. Numbering is positional, so the
 // list handed to the model and the citations it is told to use cannot drift.
 func assemblePrompt(hits []rag.Hit) string {
 	var b strings.Builder
-	b.WriteString("Sources:\n")
+	b.WriteString("<sources>\nSources:\n")
 	for i, h := range hits {
-		fmt.Fprintf(&b, "  [%d] (%s) %s\n", i+1, citation(h.Payload), collapse(h.Payload.Text))
+		line := fmt.Sprintf("  [%d] (%s) %s", i+1, citation(h.Payload), collapse(h.Payload.Text))
+		b.WriteString(sourcesTag.ReplaceAllString(line, ""))
+		b.WriteString("\n")
 	}
+	b.WriteString("</sources>\n")
 	return b.String()
 }
 

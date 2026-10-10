@@ -1,12 +1,15 @@
 package main
 
 import (
+	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"strconv"
 	"time"
 
+	"chat-service/internal/history"
 	"chat-service/internal/responder"
 )
 
@@ -23,6 +26,8 @@ const (
 	defaultTopK            = 6
 	defaultMinScore        = 0.5
 	defaultBackgroundFloor = 2
+	defaultGuardURL        = "http://guard"
+	defaultGuardThreshold  = 0.5
 )
 
 // loadConfig parses the environment into a responder.Config. Every check that
@@ -72,7 +77,36 @@ func loadConfig() (responder.Config, error) {
 	if cfg.MinScore < -1 || cfg.MinScore > 1 {
 		return responder.Config{}, fmt.Errorf("RETRIEVAL_MIN_SCORE=%v is outside cosine similarity's range of -1 to 1", cfg.MinScore)
 	}
+
+	cfg.GuardURL = envOr("GUARD_URL", defaultGuardURL)
+	if err := validateURLVar("GUARD_URL", cfg.GuardURL); err != nil {
+		return responder.Config{}, err
+	}
+	cfg.GuardThreshold = envFloat("GUARD_THRESHOLD", defaultGuardThreshold)
+	if cfg.GuardThreshold <= 0 || cfg.GuardThreshold >= 1 {
+		return responder.Config{}, fmt.Errorf("GUARD_THRESHOLD=%v must be strictly between 0 and 1: 0 flags every turn, 1 none", cfg.GuardThreshold)
+	}
 	return cfg, nil
+}
+
+// newSigner reads HISTORY_KEY, which every replica must share. Unset falls back
+// to a per-process key: fine for one instance, broken history behind several.
+// Errors never quote the value.
+func newSigner() (*history.Signer, error) {
+	raw := os.Getenv("HISTORY_KEY")
+	if raw == "" {
+		slog.Info("HISTORY_KEY unset, signing with a per-process key")
+		return history.NewSigner(), nil
+	}
+	key, err := hex.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("HISTORY_KEY is not hex; generate one with openssl rand -hex 32")
+	}
+	s, err := history.NewSignerWithKey(key)
+	if err != nil {
+		return nil, fmt.Errorf("HISTORY_KEY: %w", err)
+	}
+	return s, nil
 }
 
 // echoDelay reads ECHO_DELAY_MS. Set it to 0 for load tests without

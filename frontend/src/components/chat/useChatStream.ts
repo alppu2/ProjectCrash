@@ -5,6 +5,8 @@ import { Role } from '../../gen/chat_pb';
 export interface ChatMessage {
   role: Role;
   content: string;
+  // From the reply's done frame. The server drops assistant turns without one.
+  signature?: Uint8Array<ArrayBuffer>;
 }
 
 // The server is stateless, so the client owns the history.
@@ -86,6 +88,15 @@ function useChatStream() {
         );
 
         for await (const chunk of stream) {
+          if (chunk.event.case === 'done') {
+            const { signature } = chunk.event.value;
+            setMessages((prev) => {
+              const next = [...prev];
+              next[idx] = { ...next[idx], signature };
+              return next;
+            });
+            continue;
+          }
           if (chunk.event.case !== 'textDelta') continue;
           const delta = chunk.event.value;
           if (!delta) continue;

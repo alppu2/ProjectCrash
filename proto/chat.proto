@@ -20,6 +20,9 @@ enum Role {
 message Message {
   Role role = 1;
   string content = 2;
+  // Set on assistant turns from Done.signature. The server drops assistant
+  // turns whose signature does not verify.
+  bytes signature = 3;
 }
 
 message ChatRequest {
@@ -38,6 +41,7 @@ message Done {
   string stop_reason = 1;
   int32 input_tokens = 2;
   int32 output_tokens = 3;
+  bytes signature = 4;  // HMAC over this reply and the question it answered
 }
 
 // Empty for now; room for e.g. a model id without a new RPC.

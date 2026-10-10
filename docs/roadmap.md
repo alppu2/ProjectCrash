@@ -15,7 +15,7 @@ live in `docs/superpowers/specs/`.
 | 2 | Horizontal scaling + load testing | Done; order/inventory path now parked |
 | 3 | LLM feature in the product | Done, as a portfolio assistant |
 | 4 | RAG over the portfolio | In progress |
-| 5 | LLM security | Not started |
+| 5 | LLM security | Done |
 | 6 | Web security | Not started |
 | 7 | Terraform + going live | In progress |
 | 8 | Eval set | Not started |
@@ -60,6 +60,22 @@ about Aleksi's background and about this stack.
 Dropped with the pivot: ticket classification, structured outputs, the queue
 as LLM backpressure.
 
+### 5. LLM security
+The top risk for a bot that represents a real person: a visitor makes it say
+something false or embarrassing and screenshots it.
+- Signed history: replies carry an HMAC bound to their question; forged or
+  unsigned assistant turns are dropped before the model sees them
+- Prompt Guard 2 classifier in its own container, in parallel with retrieval;
+  flagged turns get a fixed refusal. It fails closed: on CPU it times out
+  under load, and failing open let a flood of requests carry an attack past it
+- False positives on "ignore" aimed at earlier text are accepted: they score
+  above some real attacks, so no threshold separates them
+- Spotlighted sources, scope rules (no opinions or commitments on his behalf,
+  no role-play), honest AI-assisted attribution
+- Specs and CLAUDE.md out of the index: historical records read as current
+- promptfoo red-team suite in `evals/redteam/`, baseline 9/9 structural and
+  11/16 behaviour on llama3.2:3b; it re-runs on the hosted-provider switch
+
 ## In progress
 
 ### 4. RAG over the portfolio
@@ -85,19 +101,11 @@ Remaining:
 
 ## Next
 
-### 5. LLM security
-The top risk for a bot that represents a real person: a visitor makes it say
-something false or embarrassing and screenshots it.
-- Prompt injection: a system prompt that answers only from sources and refuses
-  role-play and instruction overrides
-- Forged assistant turns: the stateless server trusts client-sent history, so
-  assistant messages must be validated or stripped
-- Red-team the bot with adversarial questions, kept for the eval set
-
 ### 6. Web security
 Classic abuse and cost controls for an unauthenticated endpoint.
 - Per-IP rate limiting at Envoy
 - Concurrency cap on chat streams, rejecting fast instead of queueing on the GPU
+  or on the CPU guard, which withholds turns it cannot check in time
 - `max_tokens` ceiling per turn, and request body limits at Envoy
 - Keep crawlers from triggering `Warmup`
 - Alerts on token spend from the existing token metrics
@@ -109,6 +117,7 @@ Classic abuse and cost controls for an unauthenticated endpoint.
 - Hosted OpenAI-compatible provider in place of Ollama, with a spend cap
 - TLS and a registered domain
 - Env-driven frontend `baseUrl`
+- VM sizing: the guard needs ~620 MB RAM, CPU only, about 0.65 s per check
 
 ### 8. Eval set
 Unit tests show the code works; an eval set shows the answers do.
@@ -137,6 +146,8 @@ Unit tests show the code works; an eval set shows the answers do.
 - HPA on CPU, or on queue depth if the queue path comes back
 - `kubernetes_sd_configs` + RBAC in place of `docker_sd_configs`
 - Resource requests/limits, liveness/readiness probes
+- `HISTORY_KEY` from a Secret before chat-service gets a second replica:
+  per-process keys make replicas drop each other's signed replies
 
 ## Reasoning
 Observability came first because it is the feedback loop for everything else.

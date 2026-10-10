@@ -43,6 +43,11 @@ var (
 		Name: "chat_tokens_total",
 		Help: "Tokens reported by the responder, by direction.",
 	}, []string{"direction"})
+
+	chatHistoryDroppedTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "chat_history_dropped_total",
+		Help: "Assistant turns dropped from client history. \"missing\" is mostly Stop presses; a rise in \"invalid\" is tampering.",
+	}, []string{"reason"})
 )
 
 // recordTokens accounts one turn's usage. Zeros are skipped so a responder
