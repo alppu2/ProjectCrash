@@ -152,6 +152,25 @@ services:
       retries: 12
       start_period: 30s
 
+  guard-init:
+    image: curlimages/curl:8.10.1
+    # One-shot: prepares the guard's model and exits. It alone holds HF_TOKEN,
+    # so the guard serves from disk without it.
+    profiles:
+      - llm
+    user: root
+    entrypoint: ["sh", "/init.sh"]
+    environment:
+      MODEL: meta-llama/Llama-Prompt-Guard-2-22M
+      REVISION: 11614a155199674a0a95e6602d6ab0417b790ed0
+    env_file:
+      - infra/guard/.env
+    volumes:
+      - ./infra/guard/init.sh:/init.sh:ro
+      - guard-models:/data
+    networks:
+      - micro-network
+
   guard:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     container_name: guard
@@ -159,9 +178,11 @@ services:
     # not to ollama: it is needed whichever provider generates, hosted included.
     profiles:
       - llm
-    command: ["--model-id", "meta-llama/Llama-Prompt-Guard-2-22M"]
-    env_file:
-      - infra/guard/.env
+    # Local path written by guard-init; keep the revision in step with it.
+    command: ["--model-id", "/data/prompt-guard-2-22m/11614a155199674a0a95e6602d6ab0417b790ed0"]
+    depends_on:
+      guard-init:
+        condition: service_completed_successfully
     # No published host port: an unauthenticated classifier API, like ollama's.
     volumes:
       - guard-models:/data

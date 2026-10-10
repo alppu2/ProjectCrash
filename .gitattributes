@@ -1,0 +1,2 @@
+# Mounted into Linux containers; a CRLF checkout breaks sh.
+*.sh text eol=lf
