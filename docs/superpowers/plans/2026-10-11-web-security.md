@@ -15,6 +15,7 @@
 - **Client address header is `x-client-ip`, not `x-envoy-external-address`.** Envoy only sets the latter for requests it considers external, and Docker's bridge addresses are private, so it would be missing locally. `request_headers_to_add` with `%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%` and `OVERWRITE_IF_EXISTS_OR_ADD` gives the same trust property (client values are overwritten) on every request.
 - **`Balance.resets_at` is an RFC 3339 `string`, not `google.protobuf.Timestamp`.** It matches the `resets_at` in `ErrorInfo` metadata and avoids a WKT import on both codegen toolchains.
 - **A guard-refused turn is charged for a condense call that already completed.** Condense runs in parallel with the guard; leaving its tokens uncharged lets a flood of flagged messages with long histories spend input tokens outside the budget. A condense cancelled mid-flight reports nothing; the Envoy rate limit bounds that.
+- **Embedding tokens are counted, not charged.** The spec leaves them out because they run locally; a hosted embedder bills them. They cost a fraction of chat tokens, so charging them at the same rate as chat tokens would drain budgets for no real spend. `chat_embed_tokens_total` keeps them visible, and the budget gate already stops an exhausted visitor before any embed.
 - **Echo reports its word count as output tokens** (existing behaviour), so the budget is exercisable locally without a model.
 - **Refusal copy shows in the existing error banner**, not as an assistant bubble.
 - **The `/` catch-all route is removed; the `order_service_cluster` definition stays**, so restoring the order path is re-adding one route.
@@ -35,9 +36,9 @@
 
 ## Review Focus
 
-1. **A browser hanging up mid-stream must free its stream slot.** Otherwise two closed tabs lock a visitor out until restart. → Task 4 test `TestChatReleasesTheSlotWhenTheClientHangsUp`.
-2. **A provider failing mid-stream still costs tokens.** The handler must debit partial usage on the error path, or a failing provider is a free ride. → Task 4 test `TestChatDebitsPartialUsageOnError`.
-3. **A request that reached chat-service without Envoy's header** (misconfigured proxy, direct access) must be refused, not pooled into one shared bucket that one visitor can exhaust for everyone. → Task 4 test `TestChatRefusesWithoutClientAddress`.
+1. **A browser hanging up mid-stream must free its stream slot.** Otherwise two closed tabs lock a visitor out until restart. → Task 5 test `TestChatReleasesTheSlotWhenTheClientHangsUp`.
+2. **A provider failing mid-stream still costs tokens.** The handler must debit partial usage on the error path, or a failing provider is a free ride. → Task 5 test `TestChatDebitsPartialUsageOnError`.
+3. **A request that reached chat-service without Envoy's header** (misconfigured proxy, direct access) must be refused, not pooled into one shared bucket that one visitor can exhaust for everyone. → Task 5 test `TestChatRefusesWithoutClientAddress`.
 4. **Envoy on a dual-stack listener reports `::ffff:203.0.113.7`.** That must key the same as `203.0.113.7`, or one visitor gets two budgets. → Task 1 test case in `TestVisitorKey`.
 5. **Midnight passing during an open stream.** The day's reset must not reset open-stream counts (or the cap is bypassed at midnight), and the debit lands on the new day. → Task 1 test `TestMidnightResetKeepsOpenStreams`.
 
@@ -809,7 +810,155 @@ git commit -m "feat(responder): cap output per turn and report condense usage"
 
 ---
 
-### Task 3: Proto `Balance` and regenerated code
+### Task 3: Embedding token metric
+
+**Files:**
+- Modify: `services/chat-service/internal/rag/embed.go` (package doc ~L1, struct `OpenAIEmbedder` ~L32, `post` ~L91)
+- Modify: `services/chat-service/internal/responder/metrics.go`
+- Modify: `services/chat-service/internal/responder/new.go` (`newRetriever` ~L80)
+- Modify: `services/chat-service/cmd/ingest/main.go`
+- Test: `services/chat-service/internal/rag/embed_test.go`
+
+**Interfaces:**
+- Consumes: nothing from Tasks 1–2.
+- Produces:
+  - `OpenAIEmbedder.OnUsage func(tokens int)`: called once per `/embeddings` request with the provider-reported `usage.prompt_tokens`; nil ignores it. Not called when the provider omits `usage`.
+  - Counter `chat_embed_tokens_total` (no labels).
+
+Embedding tokens are **counted, not charged**. They cost a fraction of chat tokens, and charging them at the same rate as chat tokens would drain a visitor's budget for almost no spend. The counter keeps the spend visible. The `Embedder` interface is unchanged, and `rag` still exports no metrics: it reports through the callback, and the caller owns the collector.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `embed_test.go`:
+
+```go
+// Hosted embeddings bill per input token. Without this the spend dashboards
+// miss every query and every ingest run.
+func TestEmbedReportsProviderUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decoding request: %v", err)
+			return
+		}
+		type item struct {
+			Embedding []float32 `json:"embedding"`
+			Index     int       `json:"index"`
+		}
+		out := struct {
+			Data  []item `json:"data"`
+			Usage struct {
+				PromptTokens int `json:"prompt_tokens"`
+			} `json:"usage"`
+		}{}
+		for i := range req.Input {
+			out.Data = append(out.Data, item{Embedding: []float32{1, 0}, Index: i})
+		}
+		out.Usage.PromptTokens = 3 * len(req.Input)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
+	}))
+	defer srv.Close()
+
+	e, err := NewOpenAIEmbedder(context.Background(), srv.URL, "m", "", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAIEmbedder() error = %v", err)
+	}
+	var got int
+	e.OnUsage = func(tokens int) { got += tokens }
+
+	texts := make([]string, EmbedBatchSize+8)
+	for i := range texts {
+		texts[i] = "t"
+	}
+	if _, err := e.Embed(context.Background(), texts); err != nil {
+		t.Fatalf("Embed() error = %v", err)
+	}
+	if want := 3 * len(texts); got != want {
+		t.Errorf("reported %d tokens, want %d summed across both batches", got, want)
+	}
+}
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `cd services/chat-service && go test -run TestEmbedReportsProviderUsage ./internal/rag/`
+Expected: FAIL to compile, `e.OnUsage undefined`.
+
+- [ ] **Step 3: Implement**
+
+`embed.go` package doc, second and third lines become:
+
+```go
+// ingest command. It exports no metrics: the chat service observes durations
+// and token usage around these calls, and ingest prints a summary instead.
+```
+
+Add to `OpenAIEmbedder`, after `Client`:
+
+```go
+	// OnUsage receives each request's provider-reported input tokens; nil
+	// ignores them. Called concurrently when Embed is.
+	OnUsage func(tokens int)
+```
+
+In `post`, decode `usage` alongside `data`, and report it right after a successful decode. The provider has billed the request by then, whatever the vector checks below decide:
+
+```go
+	var out struct {
+		Data  []embedItem `json:"data"`
+		Usage struct {
+			PromptTokens int `json:"prompt_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decoding embeddings response: %w", err)
+	}
+	if e.OnUsage != nil && out.Usage.PromptTokens > 0 {
+		e.OnUsage(out.Usage.PromptTokens)
+	}
+```
+
+`metrics.go`: add to the `var` block, after `chatEmbedDuration`:
+
+```go
+	chatEmbedTokensTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "chat_embed_tokens_total",
+		Help: "Input tokens the embedding provider reported for query embeds. Counted, not charged to any budget; zero if the provider omits usage.",
+	})
+```
+
+`new.go`, in `newRetriever` right after the `NewOpenAIEmbedder` error check:
+
+```go
+	embedder.OnUsage = func(tokens int) { chatEmbedTokensTotal.Add(float64(tokens)) }
+```
+
+`cmd/ingest/main.go`: after the `NewOpenAIEmbedder` error check, `var embedTokens int` and `embedder.OnUsage = func(tokens int) { embedTokens += tokens }` (ingest embeds sequentially). After the `embedded` summary line:
+
+```go
+	fmt.Printf("  tokens   %4d embedding input tokens reported\n", embedTokens)
+```
+
+The dimension probe in the constructor runs before `OnUsage` is set and goes uncounted: two tokens per process start.
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `cd services/chat-service && go test ./... && go vet ./...`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add services/chat-service/internal/rag services/chat-service/internal/responder services/chat-service/cmd/ingest
+git commit -m "feat(rag): count provider-reported embedding tokens"
+```
+
+---
+
+### Task 4: Proto `Balance` and regenerated code
 
 **Files:**
 - Modify: `proto/chat.proto`
@@ -871,17 +1020,17 @@ git commit -m "feat(proto): token balance on Done and WarmupResponse"
 
 ---
 
-### Task 4: Handler enforces and reports the budget
+### Task 5: Handler enforces and reports the budget
 
 **Files:**
 - Create: `services/chat-service/internal/server/budget.go`
 - Modify: `services/chat-service/internal/server/chat.go`
-- Modify: `services/chat-service/cmd/chat-service/main.go` (only the `server.New` call: pass `nil` for now; Task 5 wires the real ledger)
+- Modify: `services/chat-service/cmd/chat-service/main.go` (only the `server.New` call: pass `nil` for now; Task 6 wires the real ledger)
 - Test: `services/chat-service/internal/server/chat_test.go`, new `services/chat-service/internal/server/budget_test.go`
 
 **Interfaces:**
-- Consumes: Task 1 `budget.Ledger`, `budget.VisitorKey`, `*budget.RefusedError`, `budget.Balance`; Task 3 `chatpb.Balance`.
-- Produces: `func New(r responder.Responder, signer *history.Signer, ledger *budget.Ledger) chatpb.ChatServiceServer` (ledger must be non-nil at runtime; Task 5 builds it). Metadata key `x-client-ip` is what Envoy (Task 6) must set.
+- Consumes: Task 1 `budget.Ledger`, `budget.VisitorKey`, `*budget.RefusedError`, `budget.Balance`; Task 4 `chatpb.Balance`.
+- Produces: `func New(r responder.Responder, signer *history.Signer, ledger *budget.Ledger) chatpb.ChatServiceServer` (ledger must be non-nil at runtime; Task 6 builds it). Metadata key `x-client-ip` is what Envoy (Task 7) must set.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1209,7 +1358,7 @@ Return `resp` from both success returns (the `s.warmer == nil` one and the end o
 - Imports: add `errors` and `chat-service/internal/budget`.
 - Update the doc comment on `Chat` only if it no longer holds; the single deferred accounting is unchanged.
 
-`cmd/chat-service/main.go`: change to `server.New(resp, signer, nil)` so the module builds; Task 5 replaces `nil`.
+`cmd/chat-service/main.go`: change to `server.New(resp, signer, nil)` so the module builds; Task 6 replaces `nil`.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -1225,7 +1374,7 @@ git commit -m "feat(chat): enforce token budgets and stream caps per visitor"
 
 ---
 
-### Task 5: Configuration and wiring
+### Task 6: Configuration and wiring
 
 **Files:**
 - Modify: `services/chat-service/cmd/chat-service/config.go`
@@ -1234,7 +1383,7 @@ git commit -m "feat(chat): enforce token budgets and stream caps per visitor"
 - Test: `services/chat-service/cmd/chat-service/main_test.go`
 
 **Interfaces:**
-- Consumes: Task 1 `budget.Config`, `budget.New`; Task 2 `responder.Config.MaxOutputTokens`; Task 4 `server.New(r, signer, ledger)`.
+- Consumes: Task 1 `budget.Config`, `budget.New`; Task 2 `responder.Config.MaxOutputTokens`; Task 5 `server.New(r, signer, ledger)`.
 - Produces: `func loadBudget() (budget.Config, error)`, `func requirePositive(name string) (int64, error)`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1393,7 +1542,7 @@ git commit -m "feat(chat): load budget limits from the environment"
 
 ---
 
-### Task 6: Envoy edge hardening
+### Task 7: Envoy edge hardening
 
 **Files:**
 - Modify: `infra/envoy/envoy.yaml` (full replacement below)
@@ -1401,8 +1550,8 @@ git commit -m "feat(chat): load budget limits from the environment"
 - Create: `infra/envoy/check-edge.sh`
 
 **Interfaces:**
-- Consumes: Task 4's trust in `x-client-ip`.
-- Produces: `x-client-ip` on every request to chat-service; `RESOURCE_EXHAUSTED` without `ErrorInfo` for the rate limit (the frontend in Task 7 relies on this); `grpc-status-details-bin` exposed via CORS.
+- Consumes: Task 5's trust in `x-client-ip`.
+- Produces: `x-client-ip` on every request to chat-service; `RESOURCE_EXHAUSTED` without `ErrorInfo` for the rate limit (the frontend in Task 8 relies on this); `grpc-status-details-bin` exposed via CORS.
 
 - [ ] **Step 1: Write the edge check script (the failing test)**
 
@@ -1607,7 +1756,7 @@ static_resources:
 
 - [ ] **Step 4: Run the check to verify it passes**
 
-Make sure `services/chat-service/.env` has the budget variables from Task 5 (the human adds them; agents must not open `.env`). If chat-service is restart-looping with `must be a positive integer`, stop and ask the human to copy the new block from `.env.example`.
+Make sure `services/chat-service/.env` has the budget variables from Task 6 (the human adds them; agents must not open `.env`). If chat-service is restart-looping with `must be a positive integer`, stop and ask the human to copy the new block from `.env.example`.
 
 Run: `docker compose up --build -d && docker compose logs envoy | tail -20 && bash infra/envoy/check-edge.sh`
 Expected: Envoy logs show no config rejection; every line `ok`; exit 0.
@@ -1625,7 +1774,7 @@ git commit -m "feat(envoy): per-IP rate limit, body limit, locked CORS, client a
 
 ---
 
-### Task 7: Frontend refusal copy and balance state
+### Task 8: Frontend refusal copy and balance state
 
 **Files:**
 - Create: `frontend/src/components/chat/refusal.ts`
@@ -1634,7 +1783,7 @@ git commit -m "feat(envoy): per-IP rate limit, body limit, locked CORS, client a
 - Test: `frontend/src/components/chat/useChatStream.test.ts`, `frontend/src/components/chat/useWarmup.test.ts`
 
 **Interfaces:**
-- Consumes: Task 3 TS `Balance`, `Done.balance`, `WarmupResponse.balance`; Task 4 ErrorInfo contract; Task 6 rate limit as `ResourceExhausted` without details.
+- Consumes: Task 4 TS `Balance`, `Done.balance`, `WarmupResponse.balance`; Task 5 ErrorInfo contract; Task 7 rate limit as `ResourceExhausted` without details.
 - Produces: `describeError(err: unknown): string`, `ErrorInfo` message type; `useChatStream()` and `useWarmup()` both return `balance: Balance | undefined`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1814,7 +1963,7 @@ git commit -m "feat(frontend): refusal copy per reason and budget balance in sta
 
 ---
 
-### Task 8: Alert rules and Alertmanager
+### Task 9: Alert rules and Alertmanager
 
 **Files:**
 - Create: `infra/prometheus/rules/chat.yml`
@@ -2032,7 +2181,7 @@ git commit -m "feat(alerting): spend, refusal and guard alerts through Alertmana
 
 ---
 
-### Task 9: Documentation
+### Task 10: Documentation
 
 **Files:**
 - Modify: `docs/roadmap.md`
@@ -2049,6 +2198,7 @@ assistant down for everyone. The budget is per visitor first.
 - Per-visitor and site-wide daily token budgets in chat-service, keyed on the
   client address Envoy resolves; charged after each turn with the provider's
   reported usage, condense included; balance returned on `Done` and `Warmup`
+- Embedding tokens counted in `chat_embed_tokens_total`, not charged
 - Concurrent stream caps, refused at once rather than queued
 - `max_tokens` per reply, bounding how far one turn overshoots a budget
 - Envoy v1.39: per-IP rate limit, 64 KB body limit, CORS locked to one origin,
