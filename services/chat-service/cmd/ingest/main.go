@@ -32,6 +32,8 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
+	var embedTokens int
+	embedder.OnUsage = func(tokens int) { embedTokens += tokens }
 
 	store := &rag.Store{
 		BaseURL:    envOr("QDRANT_URL", "http://qdrant:6333"),
@@ -56,6 +58,7 @@ func main() {
 		fmt.Printf("  unparsed %4d files, still indexed at their previous contents\n", stats.Unparsed)
 	}
 	fmt.Printf("  embedded %4d chunks from %d files\n", stats.EmbeddedChunks, stats.EmbeddedFiles)
+	fmt.Printf("  tokens   %4d embedding input tokens reported\n", embedTokens)
 	fmt.Printf("  total    %4d points in %s\n", stats.Total, store.Collection)
 }
 

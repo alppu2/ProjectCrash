@@ -24,6 +24,13 @@ type Usage struct {
 	OutputTokens int32
 }
 
+// plus adds o's tokens to u, keeping u's StopReason.
+func (u Usage) plus(o Usage) Usage {
+	u.InputTokens += o.InputTokens
+	u.OutputTokens += o.OutputTokens
+	return u
+}
+
 // Responder produces an assistant reply, emitting it in pieces. emit is called
 // once per piece; if it returns an error, Stream stops and returns it
 // unchanged.

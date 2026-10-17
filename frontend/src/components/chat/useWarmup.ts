@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { chatClient } from '../../api';
+import type { Balance } from '../../gen/chat_pb';
 import { WELCOME_MESSAGE } from './welcome';
 
 export type WarmupStatus = 'warming' | 'ready' | 'unavailable';
@@ -15,12 +16,16 @@ function useWarmup(wordDelayMs = WORD_DELAY_MS) {
   const [status, setStatus] = useState<WarmupStatus>('warming');
   const [attempt, setAttempt] = useState(0);
   const [welcome, setWelcome] = useState('');
+  const [balance, setBalance] = useState<Balance | undefined>();
 
   useEffect(() => {
     const ac = new AbortController();
     chatClient
       .warmup({}, { signal: ac.signal, timeoutMs: WARMUP_TIMEOUT_MS })
-      .then(() => setStatus('ready'))
+      .then((res) => {
+        setBalance(res.balance);
+        setStatus('ready');
+      })
       .catch(() => {
         // StrictMode's discarded mount aborts its call; only the live one reports.
         if (!ac.signal.aborted) setStatus('unavailable');
@@ -45,7 +50,7 @@ function useWarmup(wordDelayMs = WORD_DELAY_MS) {
     setAttempt((n) => n + 1);
   }, []);
 
-  return { status, welcome, retry };
+  return { status, welcome, retry, balance };
 }
 
 export default useWarmup;

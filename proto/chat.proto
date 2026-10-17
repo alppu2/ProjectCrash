@@ -42,8 +42,19 @@ message Done {
   int32 input_tokens = 2;
   int32 output_tokens = 3;
   bytes signature = 4;  // HMAC over this reply and the question it answered
+  Balance balance = 5;  // after this turn was charged
 }
 
 // Empty for now; room for e.g. a model id without a new RPC.
 message WarmupRequest {}
-message WarmupResponse {}
+
+message WarmupResponse {
+  Balance balance = 1;  // unset when the visitor's address is unknown
+}
+
+// A visitor's token budget for the current UTC day.
+message Balance {
+  int32 tokens_used = 1;
+  int32 tokens_remaining = 2;
+  string resets_at = 3;  // RFC 3339, UTC
+}

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"chat-service/internal/budget"
 	"chat-service/internal/history"
 	"chat-service/internal/responder"
 )
@@ -86,6 +87,11 @@ func loadConfig() (responder.Config, error) {
 	if cfg.GuardThreshold <= 0 || cfg.GuardThreshold >= 1 {
 		return responder.Config{}, fmt.Errorf("GUARD_THRESHOLD=%v must be strictly between 0 and 1: 0 flags every turn, 1 none", cfg.GuardThreshold)
 	}
+	maxOut, err := requirePositive("MAX_OUTPUT_TOKENS")
+	if err != nil {
+		return responder.Config{}, err
+	}
+	cfg.MaxOutputTokens = int(maxOut)
 	return cfg, nil
 }
 
@@ -171,4 +177,38 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// requirePositive has no fallback: every limit it reads guards spend, and a
+// default would hide a missing line in .env behind numbers nobody chose.
+func requirePositive(name string) (int64, error) {
+	raw := os.Getenv(name)
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s=%q must be a positive integer; there is no unlimited", name, raw)
+	}
+	return n, nil
+}
+
+func loadBudget() (budget.Config, error) {
+	var vals [5]int64
+	for i, name := range []string{"BUDGET_TOKENS_PER_VISITOR", "BUDGET_TOKENS_GLOBAL", "BUDGET_MAX_VISITORS", "MAX_STREAMS_GLOBAL", "MAX_STREAMS_PER_VISITOR"} {
+		n, err := requirePositive(name)
+		if err != nil {
+			return budget.Config{}, err
+		}
+		vals[i] = n
+	}
+	return budget.Config{
+		TokensPerVisitor:     vals[0],
+		TokensGlobal:         vals[1],
+		MaxVisitors:          int(vals[2]),
+		MaxStreamsGlobal:     int(vals[3]),
+		MaxStreamsPerVisitor: int(vals[4]),
+	}, nil
+}
+
+func loadTurnTimeout() (time.Duration, error) {
+	n, err := requirePositive("CHAT_TURN_TIMEOUT_SECONDS")
+	return time.Duration(n) * time.Second, err
 }

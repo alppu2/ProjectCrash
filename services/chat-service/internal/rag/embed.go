@@ -1,6 +1,6 @@
 // Package rag holds the retrieval pieces shared by the chat service and the
 // ingest command. It exports no metrics: the chat service observes durations
-// around these calls, and ingest prints a summary instead.
+// and token usage around these calls, and ingest prints a summary instead.
 package rag
 
 import (
@@ -34,6 +34,9 @@ type OpenAIEmbedder struct {
 	Model   string
 	APIKey  string // empty for a local Ollama; sent as a Bearer token when set
 	Client  *http.Client
+	// OnUsage receives each request's provider-reported input tokens; nil
+	// ignores them. Called concurrently when Embed is.
+	OnUsage func(tokens int)
 
 	dims int
 }
@@ -125,10 +128,16 @@ func (e *OpenAIEmbedder) post(ctx context.Context, texts []string) ([][]float32,
 	}
 
 	var out struct {
-		Data []embedItem `json:"data"`
+		Data  []embedItem `json:"data"`
+		Usage struct {
+			PromptTokens int `json:"prompt_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding embeddings response: %w", err)
+	}
+	if e.OnUsage != nil && out.Usage.PromptTokens > 0 {
+		e.OnUsage(out.Usage.PromptTokens)
 	}
 
 	// Ollama answers in request order, but ordering is not part of the API.
