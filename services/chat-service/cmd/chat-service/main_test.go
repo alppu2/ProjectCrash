@@ -8,7 +8,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"chat-service/internal/budget"
 	"chat-service/internal/guard"
 	"chat-service/internal/responder"
 )
@@ -103,6 +105,7 @@ func TestNewResponder(t *testing.T) {
 			// config checks fails on the embedder probe rather than reaching
 			// the compose network this test does not have.
 			t.Setenv("EMBED_BASE_URL", "http://127.0.0.1:1/v1")
+			t.Setenv("MAX_OUTPUT_TOKENS", "800")
 			for k, v := range tt.env {
 				t.Setenv(k, v)
 			}
@@ -174,6 +177,7 @@ func TestNewResponderConfiguresTheGroundedResponder(t *testing.T) {
 	t.Setenv("LLM_BASE_URL", "https://api.groq.com/openai/v1/")
 	t.Setenv("LLM_MODEL", "llama-3.3-70b-versatile")
 	t.Setenv("LLM_API_KEY", "gsk_secret")
+	t.Setenv("MAX_OUTPUT_TOKENS", "800")
 	t.Setenv("EMBED_BASE_URL", embedURL)
 	t.Setenv("QDRANT_URL", qdrantURL)
 	t.Setenv("GUARD_URL", stubGuard(t))
@@ -354,5 +358,68 @@ func TestNewSigner(t *testing.T) {
 				t.Errorf("error = %q, want it to name HISTORY_KEY and omit the value", err)
 			}
 		})
+	}
+}
+
+func setBudgetEnv(t *testing.T) {
+	t.Helper()
+	for k, v := range map[string]string{
+		"BUDGET_TOKENS_PER_VISITOR": "20000",
+		"BUDGET_TOKENS_GLOBAL":      "500000",
+		"BUDGET_MAX_VISITORS":       "100000",
+		"MAX_STREAMS_GLOBAL":        "16",
+		"MAX_STREAMS_PER_VISITOR":   "2",
+	} {
+		t.Setenv(k, v)
+	}
+}
+
+func TestLoadBudget(t *testing.T) {
+	setBudgetEnv(t)
+	cfg, err := loadBudget()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := budget.Config{TokensPerVisitor: 20000, TokensGlobal: 500000, MaxVisitors: 100000, MaxStreamsGlobal: 16, MaxStreamsPerVisitor: 2}
+	if cfg != want {
+		t.Errorf("loadBudget() = %+v, want %+v", cfg, want)
+	}
+}
+
+// A blank line in .env must never become an unlimited budget.
+func TestLoadBudgetRejectsMissingAndNonPositive(t *testing.T) {
+	for _, name := range []string{"BUDGET_TOKENS_PER_VISITOR", "BUDGET_TOKENS_GLOBAL", "BUDGET_MAX_VISITORS", "MAX_STREAMS_GLOBAL", "MAX_STREAMS_PER_VISITOR"} {
+		for _, bad := range []string{"", "0", "-5", "lots"} {
+			setBudgetEnv(t)
+			t.Setenv(name, bad)
+			_, err := loadBudget()
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("%s=%q: err = %v, want an error naming the variable", name, bad, err)
+			}
+		}
+	}
+}
+
+// Required in echo mode too: the stream cap applies there, and a missing
+// deadline would let one stuck turn hold its slot until restart.
+func TestLoadTurnTimeout(t *testing.T) {
+	t.Setenv("CHAT_TURN_TIMEOUT_SECONDS", "120")
+	if got, err := loadTurnTimeout(); err != nil || got != 2*time.Minute {
+		t.Errorf("loadTurnTimeout() = %v, %v; want 2m0s", got, err)
+	}
+	for _, bad := range []string{"", "0", "-5", "2m"} {
+		t.Setenv("CHAT_TURN_TIMEOUT_SECONDS", bad)
+		if _, err := loadTurnTimeout(); err == nil || !strings.Contains(err.Error(), "CHAT_TURN_TIMEOUT_SECONDS") {
+			t.Errorf("%q: err = %v, want an error naming the variable", bad, err)
+		}
+	}
+}
+
+func TestMaxOutputTokensIsRequiredForLLM(t *testing.T) {
+	t.Setenv("RESPONDER", "llm")
+	t.Setenv("MAX_OUTPUT_TOKENS", "0")
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "MAX_OUTPUT_TOKENS") {
+		t.Errorf("err = %v, want an error naming MAX_OUTPUT_TOKENS", err)
 	}
 }
