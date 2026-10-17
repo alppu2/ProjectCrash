@@ -83,6 +83,7 @@ func newRetriever(ctx context.Context, cfg Config, inner *OpenAIResponder) (*Ret
 	if err != nil {
 		return nil, err
 	}
+	embedder.OnUsage = func(tokens int) { chatEmbedTokensTotal.Add(float64(tokens)) }
 
 	store := &rag.Store{
 		BaseURL:    cfg.QdrantURL,
