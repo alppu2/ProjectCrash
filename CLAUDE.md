@@ -8,7 +8,7 @@ Aleksi Valta's engineering portfolio, headed for a public domain: Go microservic
 
 This means anything user-visible is portfolio surface: copy, error states, dashboards, and the chat's answers are read by people evaluating the work, not just by its author. Status, roadmap and rationale live in `docs/roadmap.md` — keep status there, not here; this file holds what changes rarely. Per-feature design docs are in `docs/superpowers/specs/` and `docs/superpowers/plans/` and are historical records of decisions — don't retro-edit them to match later framing.
 
-**Parked:** `order-service`, `inventory-service`, MongoDB and RabbitMQ are commented out of `docker-compose.yml`. Their code, Envoy route and scrape jobs stay, and the order/async sections below describe them as they work when restored.
+**Parked:** `order-service`, `inventory-service`, MongoDB and RabbitMQ are commented out of `docker-compose.yml`. Their code, Envoy cluster and scrape jobs stay; the route is commented out in `envoy.yaml`, and the order/async sections below describe them as they work when restored.
 
 ## Commands
 
@@ -26,6 +26,8 @@ docker compose up --build                              # RESPONDER=echo: no mode
 docker compose --profile llm up --build -d             # + ollama, qdrant, guard; needs RESPONDER=llm
 docker compose run --rm ingest                         # build/refresh the retrieval index; --full re-embeds all
 npx promptfoo eval -c evals/redteam/promptfooconfig.yaml   # red-team suite, stack up with --profile llm
+bash infra/envoy/check-edge.sh                         # edge limits, stack up
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W)/infra/prometheus:/p" --entrypoint promtool prom/prometheus:v3.12.0 test rules /p/rules-test/chat.test.yml
 docker compose logs -f chat-service
 ```
 
@@ -54,7 +56,7 @@ npm run format     # prettier --write src/
 `npm run format:check` fails on files this repo has never formatted — check
 whether a warning predates your change before reformatting anything.
 
-Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin), Prometheus `:9090`, Tempo `:3200`, Loki `:3100`. Ollama, Qdrant and the guard publish no host port (unauthenticated APIs); use `docker compose exec`. Restoring the order path adds RabbitMQ management `:15672`, MongoDB `:27017` and inventory-service metrics `:9092`.
+Endpoints when the stack is up: Envoy `:8080` (the only entry point for the frontend), Grafana `:3000` (anonymous admin, safe only on loopback), Prometheus `:9090`, Alertmanager `:9093`, Tempo `:3200`, Loki `:3100`. Every endpoint except Envoy binds to `127.0.0.1`. Ollama, Qdrant and the guard publish no host port (unauthenticated APIs); use `docker compose exec`. Restoring the order path adds RabbitMQ management `:15672`, MongoDB `:27017` and inventory-service metrics `:9092`.
 
 ## Protobuf codegen
 
@@ -67,7 +69,7 @@ Changing a proto means regenerating both sides and committing the output.
 
 ## Architecture
 
-**Request path.** Browser → Envoy `:8080` (gRPC-Web translation + CORS) → gRPC service. Envoy routes on the gRPC path prefix: `/chat.v1.ChatService/` → `chat_service_cluster`, everything else → `order_service_cluster`. Both routes set `timeout: 0s` and `grpc_timeout_header_max: 0s` — Envoy's 15s default truncates streams, so any new streaming route needs the same.
+**Request path.** Browser → Envoy `:8080` (gRPC-Web translation + CORS) → gRPC service. Envoy routes on the gRPC path prefix: `/chat.v1.ChatService/` → `chat_service_cluster`; any other path is a 404 while the order path is parked. The chat route sets `timeout: 0s` and `grpc_timeout_header_max: 0s` — Envoy's 15s default truncates streams, so any new streaming route needs the same. The chat route also caps a stream at `max_stream_duration: 180s`, a backstop above chat-service's own `CHAT_TURN_TIMEOUT_SECONDS`. Envoy does not treat a gRPC-Web request as gRPC in its own local replies, so `local_reply_config` rewrites the rate limit's 429 into a trailers-only `RESOURCE_EXHAUSTED`; connect-es would read a bare 429 as `Unavailable`.
 
 **Horizontal scaling.** `order-service` deliberately has no `container_name` and no host port mapping in `docker-compose.yml`, which is what lets `--scale` work. Envoy uses `STRICT_DNS` + `round_robin` against the `order-service` DNS name to reach all replicas; Prometheus finds them via `docker_sd_configs` with a container-name regex, rewriting the scrape target to port `9091`. Adding a port mapping or container name to that service breaks scaling.
 
@@ -79,11 +81,14 @@ Changing a proto means regenerating both sides and committing the output.
 
 **LLM security.** The handler signs every reply (`internal/history`; key from `HISTORY_KEY`, which replicas must share, else per-process) and drops assistant turns whose signature does not match the user turn before them, so client-sent history cannot put words in the model's mouth; dropping, not rejecting, because a stopped reply is never signed. `RetrievingResponder` runs the Prompt Guard 2 classifier (`guard` container, `internal/guard`) in parallel with retrieval over the user turns no signed reply has answered (the newest, plus orphans); a flagged turn gets the fixed `guardRefusal` and never reaches the model, and a refused exchange is dropped from later turns so one flagged message does not lock the visitor out. The guard fails closed: a turn it cannot check in time gets the fixed `guardUnavailable` and is dropped like a refusal, since under load a fail-open guard lets a flood of requests carry an attack past it. It is also required at startup. `evals/redteam/` holds the promptfoo suite and must stay outside the ingest allowlist.
 
+**Budgets.** Every per-visitor limit keys on `x-client-ip`, which Envoy overwrites with the address it resolved (`use_remote_address` + `xff_num_trusted_hops`); chat-service refuses a request without it rather than pooling it. `internal/budget` checks stream caps and today's tokens before the turn and debits the provider-reported usage after, on every exit path. Refusals are `ResourceExhausted` with an `ErrorInfo` reason the frontend maps to copy; Envoy's per-IP limit is the `ResourceExhausted` without one. Limits are required env vars with no unlimited value; the alert threshold in `infra/prometheus/rules/chat.yml` tracks `BUDGET_TOKENS_GLOBAL`.
+
 **`internal/rag/sources.go` is the security boundary.** Its allowlist decides what text unauthenticated visitors can get quoted back. Add paths deliberately, never widen to a denylist, and keep `TestWalkNeverSelectsSecrets` passing; personal material goes in gitignored `corpus/`.
 
 ## Cross-cutting conventions
 
 - **Observability is per-service and duplicated on purpose.** There is no shared Go module, so `telemetry.go` (OTLP → Tempo), `metrics.go` (promauto collectors), and `log_trace.go` (`logWithTrace` injecting `trace_id`/`span_id` into slog) are copied into each service. Fixes to one usually belong in all of them. chat-service is the exception: it has `cmd/` + `internal/` layout, so its copies are `internal/obs` (`LogWithTrace`, `InitTracer`) and `internal/server/metrics.go`.
+- **Nothing mounts the Docker socket but `docker-socket-proxy`.** It passes container and network reads only, on the internal `socket-proxy` network that only prometheus and promtail join; discovery points at `tcp://docker-socket-proxy:2375`.
 - **Every service serves Prometheus metrics on `:9091`** from a goroutine started before anything else in `main`, and logs JSON via `slog.NewJSONHandler` to stdout (Promtail ships it to Loki).
 - **Both `docker_sd_configs` regexes must survive a compose-generated name.** `prometheus.yml` and `promtail-config.yml` discover containers the same way, and relabel regexes are *fully anchored* — a bare `/(order-service)` never matches `/<project>-order-service-1`, which is what `order-service` is called because it has no `container_name`. Match with `.*` on both sides, and add the service to both files. Getting this wrong drops that service's logs or metrics silently: nothing errors, the target just never appears.
 - **Trace context crosses gRPC via `otelgrpc` stats handlers, and crosses RabbitMQ via `amqpHeaderCarrier`** (`amqp_carrier.go`) — inject into `amqp.Table` headers on publish, extract on consume. A new async hop must do both or the trace breaks.
