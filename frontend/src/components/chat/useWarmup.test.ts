@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, waitFor } from '@testing-library/react';
 import useWarmup from './useWarmup';
 import { WELCOME_MESSAGE } from './welcome';
-import { WarmupResponse } from '../../gen/chat_pb';
+import { Balance, WarmupResponse } from '../../gen/chat_pb';
 import { chatClient } from '../../api';
 
 vi.mock('../../api', () => ({
@@ -69,5 +69,15 @@ describe('useWarmup', () => {
     await waitFor(() => expect(result.current.status).toBe('ready'));
     await new Promise((resolve) => setTimeout(resolve, 40));
     expect(result.current.status).toBe('ready');
+  });
+
+  it('exposes the balance the warmup reported', async () => {
+    mockWarmup.mockResolvedValue(
+      new WarmupResponse({ balance: new Balance({ tokensRemaining: 1234 }) })
+    );
+    const { result } = renderHook(() => useWarmup(0));
+    await waitFor(() =>
+      expect(result.current.balance?.tokensRemaining).toBe(1234)
+    );
   });
 });

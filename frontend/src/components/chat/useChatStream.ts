@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { chatClient } from '../../api';
-import { Role } from '../../gen/chat_pb';
+import { Balance, Role } from '../../gen/chat_pb';
+import { describeError } from './refusal';
 
 export interface ChatMessage {
   role: Role;
@@ -49,6 +50,7 @@ function useChatStream() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [balance, setBalance] = useState<Balance | undefined>();
   const abortRef = useRef<AbortController | null>(null);
   // A ref, not the `streaming` state: two overlapping send() calls would both
   // read a stale streaming === false before either setStreaming(true) lands.
@@ -89,7 +91,8 @@ function useChatStream() {
 
         for await (const chunk of stream) {
           if (chunk.event.case === 'done') {
-            const { signature } = chunk.event.value;
+            const { signature, balance: next } = chunk.event.value;
+            if (next) setBalance(next);
             setMessages((prev) => {
               const next = [...prev];
               next[idx] = { ...next[idx], signature };
@@ -111,7 +114,7 @@ function useChatStream() {
       } catch (err) {
         // An aborted stream is the user pressing Stop, not a failure.
         if (!ac.signal.aborted) {
-          setError(err instanceof Error ? err.message : 'Unknown error');
+          setError(describeError(err));
         }
       } finally {
         // Drop the user message too: a blank placeholder would render as an
@@ -127,7 +130,7 @@ function useChatStream() {
     [messages]
   );
 
-  return { messages, streaming, error, send, stop };
+  return { messages, streaming, error, send, stop, balance };
 }
 
 export default useChatStream;

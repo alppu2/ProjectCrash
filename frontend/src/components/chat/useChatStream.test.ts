@@ -6,7 +6,7 @@ import useChatStream, {
   trimHistory,
   type ChatMessage,
 } from './useChatStream';
-import { ChatChunk, Done, Role } from '../../gen/chat_pb';
+import { Balance, ChatChunk, Done, Role } from '../../gen/chat_pb';
 import { chatClient } from '../../api';
 
 // api.ts points at Envoy on :8080. Only chat() is stubbed, so accumulation,
@@ -216,5 +216,31 @@ describe('useChatStream', () => {
       { role: Role.USER, content: 'second' },
       { role: Role.ASSISTANT, content: 'hello' },
     ]);
+  });
+});
+
+describe('useChatStream balance', () => {
+  beforeEach(() => mockChat.mockReset());
+
+  it('keeps the balance from the done frame', async () => {
+    const balance = new Balance({
+      tokensUsed: 400,
+      tokensRemaining: 19600,
+      resetsAt: '2026-10-12T00:00:00Z',
+    });
+    mockChat.mockImplementation(() =>
+      (async function* () {
+        yield deltaChunk('hi');
+        yield new ChatChunk({
+          event: { case: 'done', value: new Done({ balance }) },
+        });
+      })()
+    );
+
+    const { result } = renderHook(() => useChatStream());
+    await act(async () => {
+      await result.current.send('hello');
+    });
+    expect(result.current.balance?.tokensRemaining).toBe(19600);
   });
 });
