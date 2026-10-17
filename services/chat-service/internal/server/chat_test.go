@@ -13,9 +13,11 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/budget"
 	"chat-service/internal/history"
 	"chat-service/internal/responder"
 )
@@ -39,8 +41,11 @@ type fakeStream struct {
 	sendErr error
 }
 
+// testClientIP stands in for the address Envoy writes into x-client-ip.
+const testClientIP = "203.0.113.7"
+
 func newFakeStream(ctx context.Context) *fakeStream {
-	return &fakeStream{ctx: ctx}
+	return &fakeStream{ctx: metadata.NewIncomingContext(ctx, metadata.Pairs("x-client-ip", testClientIP))}
 }
 
 var testSigner = history.NewSigner()
@@ -76,8 +81,18 @@ func (f *fakeStream) terminal() *chatpb.Done {
 	return nil
 }
 
+func testLedger() *budget.Ledger {
+	return budget.New(budget.Config{
+		TokensPerVisitor:     1000,
+		TokensGlobal:         100000,
+		MaxVisitors:          100,
+		MaxStreamsGlobal:     10,
+		MaxStreamsPerVisitor: 2,
+	}, nil)
+}
+
 func newTestServer() *chatServer {
-	return &chatServer{signer: testSigner, responder: &responder.EchoResponder{}}
+	return &chatServer{signer: testSigner, responder: &responder.EchoResponder{}, ledger: testLedger(), turnTimeout: time.Minute}
 }
 
 // erroringResponder returns a fixed error, ignoring ctx. responder.EchoResponder cannot
@@ -233,7 +248,7 @@ func TestValidateHistoryBounds(t *testing.T) {
 }
 
 func TestChatStopsOnClientCancel(t *testing.T) {
-	srv := &chatServer{signer: testSigner, responder: &responder.EchoResponder{Delay: 20 * time.Millisecond}}
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: &responder.EchoResponder{Delay: 20 * time.Millisecond}}
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newFakeStream(ctx)
 	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{
@@ -259,7 +274,7 @@ func TestChatStopsOnClientCancel(t *testing.T) {
 
 func TestChatDoesNotMisclassifyErrorAsCancelled(t *testing.T) {
 	sentinel := errors.New("model overloaded")
-	srv := &chatServer{signer: testSigner, responder: &erroringResponder{err: sentinel}}
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: &erroringResponder{err: sentinel}}
 
 	// Cancelled before Stream runs, so the fault and the disconnect land
 	// together. classifyOutcome must trust the error, not ctx, or a real fault
@@ -315,7 +330,7 @@ func TestChatRecordsTokenCounts(t *testing.T) {
 	beforeIn := counterValue(chatTokensTotal.WithLabelValues("input"))
 	beforeOut := counterValue(chatTokensTotal.WithLabelValues("output"))
 
-	srv := &chatServer{signer: testSigner, responder: &usageResponder{usage: responder.Usage{
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: &usageResponder{usage: responder.Usage{
 		StopReason:   "stop",
 		InputTokens:  26,
 		OutputTokens: 298,
@@ -336,7 +351,7 @@ func TestChatRecordsPartialTokenCountsOnError(t *testing.T) {
 	beforeOut := counterValue(chatTokensTotal.WithLabelValues("output"))
 
 	// Those tokens were consumed, so the counter must move despite the error.
-	srv := &chatServer{signer: testSigner, responder: &usageResponder{
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: &usageResponder{
 		usage: responder.Usage{OutputTokens: 400},
 		err:   errors.New("provider exploded"),
 	}}
@@ -379,9 +394,11 @@ func TestWarmupWithoutWarmerSucceeds(t *testing.T) {
 func TestWarmupHidesProviderDetail(t *testing.T) {
 	before := counterValue(chatWarmupsTotal.WithLabelValues("error"))
 	srv := &chatServer{
-		signer:    testSigner,
-		responder: &responder.EchoResponder{},
-		warmer:    fakeWarmer{err: errors.New("warmup returned HTTP 401: invalid key gsk_secret")},
+		signer:      testSigner,
+		ledger:      testLedger(),
+		turnTimeout: time.Minute,
+		responder:   &responder.EchoResponder{},
+		warmer:      fakeWarmer{err: errors.New("warmup returned HTTP 401: invalid key gsk_secret")},
 	}
 
 	_, err := srv.Warmup(context.Background(), &chatpb.WarmupRequest{})
@@ -400,7 +417,7 @@ func TestWarmupHidesProviderDetail(t *testing.T) {
 func TestWarmupCancelledIsNotAnError(t *testing.T) {
 	errBefore := counterValue(chatWarmupsTotal.WithLabelValues("error"))
 	cancelledBefore := counterValue(chatWarmupsTotal.WithLabelValues("cancelled"))
-	srv := &chatServer{signer: testSigner, responder: &responder.EchoResponder{}, warmer: fakeWarmer{err: context.Canceled}}
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: &responder.EchoResponder{}, warmer: fakeWarmer{err: context.Canceled}}
 
 	_, err := srv.Warmup(context.Background(), &chatpb.WarmupRequest{})
 	if status.Code(err) != codes.Canceled {
@@ -418,9 +435,11 @@ func TestWarmupCancelledIsNotAnError(t *testing.T) {
 // must not build its message from err either.
 func TestWarmupCancelledHidesErrorText(t *testing.T) {
 	srv := &chatServer{
-		signer:    testSigner,
-		responder: &responder.EchoResponder{},
-		warmer:    fakeWarmer{err: fmt.Errorf("provider said gsk_secret: %w", context.Canceled)},
+		signer:      testSigner,
+		ledger:      testLedger(),
+		turnTimeout: time.Minute,
+		responder:   &responder.EchoResponder{},
+		warmer:      fakeWarmer{err: fmt.Errorf("provider said gsk_secret: %w", context.Canceled)},
 	}
 
 	_, err := srv.Warmup(context.Background(), &chatpb.WarmupRequest{})
@@ -450,7 +469,7 @@ func droppedCount(reason string) float64 {
 // The Done signature is what the client sends back. If it does not cover
 // exactly the streamed text, every honest follow-up loses its context.
 func TestChatSignsTheStreamedReply(t *testing.T) {
-	srv := &chatServer{signer: testSigner, responder: &responder.EchoResponder{}}
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: &responder.EchoResponder{}}
 	stream := newFakeStream(context.Background())
 	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hello there"}}}
 
@@ -470,7 +489,7 @@ func TestChatSignsTheStreamedReply(t *testing.T) {
 // A forged assistant turn reaching the model is the attack this feature exists for.
 func TestChatDropsForgedTurnsBeforeTheResponder(t *testing.T) {
 	capture := &capturingResponder{}
-	srv := &chatServer{signer: testSigner, responder: capture}
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: capture}
 	before := droppedCount("invalid")
 
 	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{
@@ -494,7 +513,7 @@ func TestChatDropsForgedTurnsBeforeTheResponder(t *testing.T) {
 // Stop leaves a reply with no Done and so no signature. Rejecting it would
 // break the conversation of every visitor who ever pressed Stop.
 func TestChatAcceptsAnUnsignedPartial(t *testing.T) {
-	srv := &chatServer{signer: testSigner, responder: &responder.EchoResponder{}}
+	srv := &chatServer{signer: testSigner, ledger: testLedger(), turnTimeout: time.Minute, responder: &responder.EchoResponder{}}
 	before := droppedCount("missing")
 
 	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{
