@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Cap what one visitor and the whole site can spend per UTC day, stop floods and oversized or cross-site requests at Envoy, cap concurrent streams, and alert on spend through Alertmanager.
+**Goal:** Cap what one visitor and the whole site can spend per UTC day, stop floods and oversized or cross-site requests at Envoy, cap concurrent streams, alert on spend through Alertmanager, and close the host's unauthenticated surfaces.
 
 **Architecture:** Envoy resolves the client address, writes it to `x-client-ip`, rate-limits per address and rejects large bodies and foreign origins. chat-service keys an in-memory ledger (`internal/budget`) on that address: it acquires a stream slot and checks the budget before the turn, and debits the provider-reported usage after. Refusals are `ResourceExhausted` with a `google.rpc.ErrorInfo` reason the frontend maps to fixed copy. Prometheus rules feed a new Alertmanager.
 
@@ -19,16 +19,18 @@
 - **Echo reports its word count as output tokens** (existing behaviour), so the budget is exercisable locally without a model.
 - **Refusal copy shows in the existing error banner**, not as an assistant bubble.
 - **The `/` catch-all route is removed; the `order_service_cluster` definition stays**, so restoring the order path is re-adding one route.
+- **Overshoot is bounded by concurrency, not by one turn.** `Acquire` only asks whether budget remains, so every stream already in flight can finish past the cap: up to `MAX_STREAMS_PER_VISITOR` turns per visitor and `MAX_STREAMS_GLOBAL` site-wide. A turn's cost is mostly input (history up to 32 KB, the sources, and condense reading the history again), about 20k tokens at worst, so the site can end a day around 16 × 20k past `BUDGET_TOKENS_GLOBAL`. Documented rather than reserved: the provider spend cap is set above that sum.
+- **Every turn has a deadline (`CHAT_TURN_TIMEOUT_SECONDS`), with Envoy's `max_stream_duration` as a backstop.** The spec's stream cap assumes streams end. A turn stuck on a stalled provider, a hung dependency or a bug of ours would hold its slot until restart, and enough of them close the chat for everyone. The deadline also covers a client that stops reading, though a reply capped at `MAX_OUTPUT_TOKENS` fits in the HTTP/2 window and Envoy's buffer, so that one cannot block `Send` today.
 
 ## Global Constraints
 
 - Every limit is an env var; zero, negative, missing or unparsable is a startup error naming the variable, never "unlimited".
-- `BUDGET_TOKENS_PER_VISITOR=20000`, `BUDGET_TOKENS_GLOBAL=500000`, `BUDGET_MAX_VISITORS=100000`, `MAX_OUTPUT_TOKENS=800`, `MAX_STREAMS_GLOBAL=16`, `MAX_STREAMS_PER_VISITOR=2`.
+- `BUDGET_TOKENS_PER_VISITOR=20000`, `BUDGET_TOKENS_GLOBAL=500000`, `BUDGET_MAX_VISITORS=100000`, `MAX_OUTPUT_TOKENS=800`, `MAX_STREAMS_GLOBAL=16`, `MAX_STREAMS_PER_VISITOR=2`, `CHAT_TURN_TIMEOUT_SECONDS=120`; Envoy chat route `max_stream_duration: 180s`, above the turn deadline.
 - Refusal reasons are wire contract, exactly: `TOO_MANY_STREAMS`, `BUDGET_EXHAUSTED`, `GLOBAL_BUDGET_EXHAUSTED`; `ErrorInfo.Domain` is `chat.v1`; metadata key `resets_at` (RFC 3339, UTC).
 - Days are UTC; the ledger resets lazily at UTC midnight.
 - IPv6 visitors key on their /64; IPv4-mapped IPv6 keys as plain IPv4.
 - No visitor address in any metric label or log line.
-- Envoy: image `envoyproxy/envoy:v1.39.3`; body limit 65536 bytes; per-IP bucket 10 tokens, refilled 1 per 2s (30/min, burst 10); allowed origin `http://localhost:5173`.
+- Envoy: image `envoyproxy/envoy:v1.39.3`; body limit 65536 bytes; per-address bucket (IPv4 /32, IPv6 /64, matching the ledger) of 10 tokens, refilled 1 per 2s (30/min, burst 10); allowed origin `http://localhost:5173`.
 - Alert threshold `350000` = 70% of `BUDGET_TOKENS_GLOBAL`; a NOTE marks both places.
 - `chatStreamsTotal` is still incremented exactly once per call, from the existing deferred func.
 - Comments follow CLAUDE.md: the non-obvious why, three lines max.
@@ -41,6 +43,8 @@
 3. **A request that reached chat-service without Envoy's header** (misconfigured proxy, direct access) must be refused, not pooled into one shared bucket that one visitor can exhaust for everyone. → Task 5 test `TestChatRefusesWithoutClientAddress`.
 4. **Envoy on a dual-stack listener reports `::ffff:203.0.113.7`.** That must key the same as `203.0.113.7`, or one visitor gets two budgets. → Task 1 test case in `TestVisitorKey`.
 5. **Midnight passing during an open stream.** The day's reset must not reset open-stream counts (or the cap is bypassed at midnight), and the debit lands on the new day. → Task 1 test `TestMidnightResetKeepsOpenStreams`.
+6. **Only prometheus and promtail can reach the Docker socket proxy.** `container inspect` returns every container's env, `HF_TOKEN` and the provider key included, so the proxy must not be on `micro-network`. → Task 10 Step 5, the `_ping` check from chat-service.
+7. **A stuck turn must end and free its slot.** Each one that does not permanently shrinks the global stream cap. The deadline is a child of the stream's context, so a client hang-up still classifies as `cancelled`, not `timeout`. → Task 5 test `TestChatTurnDeadlineFreesTheSlot`.
 
 ---
 
@@ -596,11 +600,11 @@ type fakeCondenser struct {
 	out   string
 	usage Usage
 	err   error
-	seen  int
+	seen  atomic.Int32 // read by slowFlagGuard while the grounding goroutine writes it
 }
 
 func (c *fakeCondenser) condense(_ context.Context, _ []*chatpb.Message) (string, Usage, error) {
-	c.seen++
+	c.seen.Add(1)
 	return c.out, c.usage, c.err
 }
 ```
@@ -660,7 +664,7 @@ func (g *slowFlagGuard) Check(ctx context.Context, _ []string) (guard.Verdict, e
 }
 ```
 
-`slowFlagGuard` reads `seen` without a lock while the grounding goroutine writes it. Make `fakeCondenser.seen` race-safe by changing it to `seen atomic.Int32` (`c.seen.Add(1)` in `condense`; `c.seen.Load()` in the existing assertions `c.seen != 0` → `c.seen.Load() != 0`, `c2.seen != 1` → `c2.seen.Load() != 1`, and in `slowFlagGuard`). Import `sync/atomic` and `time` if not already imported.
+Update the existing assertions on `seen`: `c.seen != 0` → `c.seen.Load() != 0`, `c2.seen != 1` → `c2.seen.Load() != 1`. Import `sync/atomic` and `time` if not already imported.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1030,7 +1034,7 @@ git commit -m "feat(proto): token balance on Done and WarmupResponse"
 
 **Interfaces:**
 - Consumes: Task 1 `budget.Ledger`, `budget.VisitorKey`, `*budget.RefusedError`, `budget.Balance`; Task 4 `chatpb.Balance`.
-- Produces: `func New(r responder.Responder, signer *history.Signer, ledger *budget.Ledger) chatpb.ChatServiceServer` (ledger must be non-nil at runtime; Task 6 builds it). Metadata key `x-client-ip` is what Envoy (Task 7) must set.
+- Produces: `func New(r responder.Responder, signer *history.Signer, ledger *budget.Ledger, turnTimeout time.Duration) chatpb.ChatServiceServer` (ledger must be non-nil at runtime and turnTimeout positive; Task 6 loads both). Outcome label `timeout` on `chat_streams_total`. Metadata key `x-client-ip` is what Envoy (Task 7) must set.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1055,11 +1059,11 @@ func testLedger() *budget.Ledger {
 }
 
 func newTestServer() *chatServer {
-	return &chatServer{signer: testSigner, responder: &responder.EchoResponder{}, ledger: testLedger()}
+	return &chatServer{signer: testSigner, responder: &responder.EchoResponder{}, ledger: testLedger(), turnTimeout: time.Minute}
 }
 ```
 
-Import `google.golang.org/grpc/metadata` and `chat-service/internal/budget`. Every other `&chatServer{...}` literal in `chat_test.go` gains `ledger: testLedger()`; find them with `grep -n "&chatServer{" internal/server/chat_test.go`.
+Import `google.golang.org/grpc/metadata` and `chat-service/internal/budget`. Every other `&chatServer{...}` literal in `chat_test.go` gains `ledger: testLedger(), turnTimeout: time.Minute` (a zero timeout expires every turn at once); find them with `grep -n "&chatServer{" internal/server/chat_test.go`.
 
 Create `services/chat-service/internal/server/budget_test.go`:
 
@@ -1199,6 +1203,29 @@ func TestChatReleasesTheSlotWhenTheClientHangsUp(t *testing.T) {
 	}
 }
 
+// A turn stuck on a stalled provider or a bug of ours must end and free its
+// slot; otherwise each one permanently shrinks the global stream cap.
+func TestChatTurnDeadlineFreesTheSlot(t *testing.T) {
+	srv := newTestServer()
+	srv.turnTimeout = 20 * time.Millisecond
+	before := counterValue(chatStreamsTotal.WithLabelValues("timeout"))
+	// One more than MAX_STREAMS_PER_VISITOR: a leaked slot refuses the last.
+	for i := 0; i < 3; i++ {
+		srv.responder = &blockingResponder{started: make(chan struct{})}
+		err := srv.Chat(&chatpb.ChatRequest{Messages: userHistory("hi")}, newFakeStream(context.Background()))
+		if status.Code(err) != codes.DeadlineExceeded {
+			t.Fatalf("turn %d: err = %v, want DeadlineExceeded", i, err)
+		}
+	}
+	if got := counterValue(chatStreamsTotal.WithLabelValues("timeout")) - before; got != 3 {
+		t.Errorf("timeout += %v, want 3", got)
+	}
+	srv.responder = &responder.EchoResponder{}
+	if err := srv.Chat(&chatpb.ChatRequest{Messages: userHistory("hi")}, newFakeStream(context.Background())); err != nil {
+		t.Errorf("visitor locked out after stuck turns: %v", err)
+	}
+}
+
 func TestChatRefusesAThirdConcurrentStream(t *testing.T) {
 	srv := newTestServer()
 	r1, _ := srv.ledger.Acquire(testClientIP)
@@ -1313,7 +1340,7 @@ Run `cd services/chat-service && go get google.golang.org/genproto/googleapis/rp
 - [ ] **Step 4: Wire it into the handler**
 
 `chat.go`:
-- `chatServer` gains `ledger *budget.Ledger`; `New` becomes `func New(r responder.Responder, signer *history.Signer, ledger *budget.Ledger) chatpb.ChatServiceServer` and sets it.
+- `chatServer` gains `ledger *budget.Ledger` and `turnTimeout time.Duration`; `New` becomes `func New(r responder.Responder, signer *history.Signer, ledger *budget.Ledger, turnTimeout time.Duration) chatpb.ChatServiceServer` and sets both.
 - In `Chat`, directly after the `validateHistory` block:
 
 ```go
@@ -1334,9 +1361,27 @@ Run `cd services/chat-service && go get google.golang.org/genproto/googleapis/rp
 		return status.Error(codes.Internal, "budget check failed")
 	}
 	defer release()
+
+	// Bounds how long a slot can be held; release above frees it either way.
+	turnCtx, cancelTurn := context.WithTimeout(ctx, s.turnTimeout)
+	defer cancelTurn()
 ```
 
 The log line must not include `key` or the header value (no addresses in logs).
+- Pass `turnCtx` instead of `ctx` to `s.responder.Stream`. Leave everything else on `ctx`.
+- At the top of the `if err != nil` block after the stream, before `ClassifyOutcome`, which files `DeadlineExceeded` under `cancelled`:
+
+```go
+		// Our deadline, not the client's: the stream context is still live.
+		if errors.Is(turnCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			outcome = "timeout"
+			log.Warn("chat turn hit its deadline", "timeout", s.turnTimeout,
+				"partial_input_tokens", usage.InputTokens, "partial_output_tokens", usage.OutputTokens)
+			return status.Error(codes.DeadlineExceeded, "the reply took too long")
+		}
+```
+
+The debit added after `recordTokens` (next bullet) runs before this block, so the partial usage is charged on this path too.
 - Directly after `recordTokens(usage)`:
 
 ```go
@@ -1358,7 +1403,7 @@ Return `resp` from both success returns (the `s.warmer == nil` one and the end o
 - Imports: add `errors` and `chat-service/internal/budget`.
 - Update the doc comment on `Chat` only if it no longer holds; the single deferred accounting is unchanged.
 
-`cmd/chat-service/main.go`: change to `server.New(resp, signer, nil)` so the module builds; Task 6 replaces `nil`.
+`cmd/chat-service/main.go`: change to `server.New(resp, signer, nil, 2*time.Minute)` so the module builds; Task 6 replaces both arguments.
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
@@ -1369,7 +1414,7 @@ Expected: PASS.
 
 ```bash
 git add services/chat-service
-git commit -m "feat(chat): enforce token budgets and stream caps per visitor"
+git commit -m "feat(chat): enforce token budgets, stream caps and a turn deadline"
 ```
 
 ---
@@ -1383,8 +1428,8 @@ git commit -m "feat(chat): enforce token budgets and stream caps per visitor"
 - Test: `services/chat-service/cmd/chat-service/main_test.go`
 
 **Interfaces:**
-- Consumes: Task 1 `budget.Config`, `budget.New`; Task 2 `responder.Config.MaxOutputTokens`; Task 5 `server.New(r, signer, ledger)`.
-- Produces: `func loadBudget() (budget.Config, error)`, `func requirePositive(name string) (int64, error)`.
+- Consumes: Task 1 `budget.Config`, `budget.New`; Task 2 `responder.Config.MaxOutputTokens`; Task 5 `server.New(r, signer, ledger, turnTimeout)`.
+- Produces: `func loadBudget() (budget.Config, error)`, `func requirePositive(name string) (int64, error)`, `func loadTurnTimeout() (time.Duration, error)`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1430,6 +1475,21 @@ func TestLoadBudgetRejectsMissingAndNonPositive(t *testing.T) {
 	}
 }
 
+// Required in echo mode too: the stream cap applies there, and a missing
+// deadline would let one stuck turn hold its slot until restart.
+func TestLoadTurnTimeout(t *testing.T) {
+	t.Setenv("CHAT_TURN_TIMEOUT_SECONDS", "120")
+	if got, err := loadTurnTimeout(); err != nil || got != 2*time.Minute {
+		t.Errorf("loadTurnTimeout() = %v, %v; want 2m0s", got, err)
+	}
+	for _, bad := range []string{"", "0", "-5", "2m"} {
+		t.Setenv("CHAT_TURN_TIMEOUT_SECONDS", bad)
+		if _, err := loadTurnTimeout(); err == nil || !strings.Contains(err.Error(), "CHAT_TURN_TIMEOUT_SECONDS") {
+			t.Errorf("%q: err = %v, want an error naming the variable", bad, err)
+		}
+	}
+}
+
 func TestMaxOutputTokensIsRequiredForLLM(t *testing.T) {
 	t.Setenv("RESPONDER", "llm")
 	t.Setenv("MAX_OUTPUT_TOKENS", "0")
@@ -1440,7 +1500,7 @@ func TestMaxOutputTokensIsRequiredForLLM(t *testing.T) {
 }
 ```
 
-Import `chat-service/internal/budget` in the test file.
+Import `chat-service/internal/budget` and `time` in the test file.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
@@ -1480,6 +1540,11 @@ func loadBudget() (budget.Config, error) {
 		MaxStreamsPerVisitor: int(vals[4]),
 	}, nil
 }
+
+func loadTurnTimeout() (time.Duration, error) {
+	n, err := requirePositive("CHAT_TURN_TIMEOUT_SECONDS")
+	return time.Duration(n) * time.Second, err
+}
 ```
 
 In `loadConfig`, as the last check before `return cfg, nil` (llm branch only):
@@ -1503,9 +1568,14 @@ Import `chat-service/internal/budget`.
 		os.Exit(1)
 	}
 	ledger := budget.New(budgetCfg, nil)
+	turnTimeout, err := loadTurnTimeout()
+	if err != nil {
+		slog.Error("invalid turn timeout", "error", err)
+		os.Exit(1)
+	}
 ```
 
-and register with `server.New(resp, signer, ledger)`. Import `chat-service/internal/budget`.
+and register with `server.New(resp, signer, ledger, turnTimeout)`. Import `chat-service/internal/budget`; `config.go` also needs `time`.
 
 Existing tests that build a working llm responder now fail on `MAX_OUTPUT_TOKENS`. Run `go test ./cmd/chat-service/`; for each test that fails with an error mentioning `MAX_OUTPUT_TOKENS`, add `t.Setenv("MAX_OUTPUT_TOKENS", "800")` next to its other `t.Setenv` calls (for the table test `TestNewResponder`, add it once before the loop applying `tt.env`, at ~L105).
 
@@ -1516,16 +1586,20 @@ Existing tests that build a working llm responder now fail on `MAX_OUTPUT_TOKENS
 # is a startup error, never "unlimited". Days are UTC; a restart resets budgets.
 # Tokens a visitor may spend per day, condense and reply, input and output.
 BUDGET_TOKENS_PER_VISITOR=20000
-# Site-wide tokens per day. Keep it below the provider's spend cap.
+# Site-wide tokens per day. Turns already in flight finish past it, so set the
+# provider's spend cap above this plus MAX_STREAMS_GLOBAL x ~20k tokens.
 # NOTE: infra/prometheus/rules/chat.yml alerts at 70% of this. Change both together.
 BUDGET_TOKENS_GLOBAL=500000
 # Distinct visitors per day; past it new visitors are refused, bounding memory.
 BUDGET_MAX_VISITORS=100000
-# Output ceiling per reply. Bounds how far one turn can overshoot a budget.
+# Output ceiling per reply; input is bounded by the history limit instead.
 MAX_OUTPUT_TOKENS=800
 # Concurrent streams. Over the cap is refused at once, never queued.
 MAX_STREAMS_GLOBAL=16
 MAX_STREAMS_PER_VISITOR=2
+# Longest a turn may hold its stream slot. Above a cold model load (~33s).
+# NOTE: Envoy's max_stream_duration on the chat route must stay above this.
+CHAT_TURN_TIMEOUT_SECONDS=120
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -1646,6 +1720,12 @@ static_resources:
                 # Step 7 raises the hop count to the proxies put in front.
                 use_remote_address: true
                 xff_num_trusted_hops: 0
+                # Slow-header connections are cut; no request_timeout, which
+                # would also cut Chat's response stream.
+                request_headers_timeout: 10s
+                common_http_protocol_options:
+                  idle_timeout: 300s
+                  headers_with_underscores_action: REJECT_REQUEST
                 route_config:
                   name: local_route
                   # Overwrites any client-sent value; chat-service trusts only this.
@@ -1673,10 +1753,13 @@ static_resources:
                             # Defaults to 15s, which truncates streams.
                             timeout: 0s
                             max_stream_duration:
+                              # Backstop above CHAT_TURN_TIMEOUT_SECONDS, if the handler's own deadline fails.
+                              max_stream_duration: 180s
                               grpc_timeout_header_max: 0s
                             rate_limits:
                               - actions:
-                                  - remote_address: {}
+                                  # /64 like the ledger: one IPv6 host owns the whole prefix.
+                                  - masked_remote_address: { v4_prefix_mask_len: 32, v6_prefix_mask_len: 64 }
                           typed_per_filter_config:
                             envoy.filters.http.local_ratelimit:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
@@ -1695,7 +1778,7 @@ static_resources:
                               max_dynamic_descriptors: 10000
                               descriptors:
                                 # No value: one bucket per address. 30/min, burst 10.
-                                - entries: [{ key: remote_address }]
+                                - entries: [{ key: masked_remote_address }]
                                   token_bucket: { max_tokens: 10, tokens_per_fill: 1, fill_interval: 2s }
                         # The parked order path is not routed. Restoring it adds back:
                         #   - match: { prefix: "/" }
@@ -1783,7 +1866,7 @@ git commit -m "feat(envoy): per-IP rate limit, body limit, locked CORS, client a
 - Test: `frontend/src/components/chat/useChatStream.test.ts`, `frontend/src/components/chat/useWarmup.test.ts`
 
 **Interfaces:**
-- Consumes: Task 4 TS `Balance`, `Done.balance`, `WarmupResponse.balance`; Task 5 ErrorInfo contract; Task 7 rate limit as `ResourceExhausted` without details.
+- Consumes: Task 4 TS `Balance`, `Done.balance`, `WarmupResponse.balance`; Task 5 ErrorInfo contract and `DeadlineExceeded` on a turn timeout; Task 7 rate limit as `ResourceExhausted` without details.
 - Produces: `describeError(err: unknown): string`, `ErrorInfo` message type; `useChatStream()` and `useWarmup()` both return `balance: Balance | undefined`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1828,6 +1911,12 @@ describe('describeError', () => {
   it('reads ResourceExhausted without a reason as the rate limit', () => {
     const err = new ConnectError('rate limited', Code.ResourceExhausted);
     expect(describeError(err)).toBe('Slow down a moment and try again.');
+  });
+
+  // chat-service's turn deadline; the raw message would read "[deadline_exceeded] ...".
+  it('words a turn that hit its deadline', () => {
+    const err = new ConnectError('the reply took too long', Code.DeadlineExceeded);
+    expect(describeError(err)).toBe('That took too long. Please try again.');
   });
 
   it('passes other errors through unchanged', () => {
@@ -1916,6 +2005,9 @@ const clock = new Intl.DateTimeFormat(undefined, {
 // Copy keyed on chat-service's refusal reasons; read by people evaluating the
 // work, so it is reviewed like the guard's refusal.
 export function describeError(err: unknown): string {
+  if (err instanceof ConnectError && err.code === Code.DeadlineExceeded) {
+    return 'That took too long. Please try again.';
+  }
   if (!(err instanceof ConnectError) || err.code !== Code.ResourceExhausted) {
     return err instanceof Error ? err.message : 'Unknown error';
   }
@@ -1974,8 +2066,8 @@ git commit -m "feat(frontend): refusal copy per reason and budget balance in sta
 - Modify: `infra/grafana/provisioning/datasources/datasources.yaml`
 
 **Interfaces:**
-- Consumes: metrics `chat_tokens_total` (existing), `chat_budget_refusals_total{reason}` (Task 1), `chat_guard_checks_total{verdict}` (existing).
-- Produces: alerts `TokenSpendPace`, `GlobalBudgetExhausted`, `BudgetRefusalSpike`, `GuardDegraded`; Alertmanager on `:9093`.
+- Consumes: metrics `chat_tokens_total` (existing), `chat_streams_total{status="timeout"}` (Task 5), `chat_budget_refusals_total{reason}` (Task 1), `chat_guard_checks_total{verdict}` (existing).
+- Produces: alerts `TokenSpendPace`, `GlobalBudgetExhausted`, `BudgetRefusalSpike`, `GuardDegraded`, `TurnTimeouts`; Alertmanager on `:9093`.
 
 - [ ] **Step 1: Write the failing rule tests**
 
@@ -2039,7 +2131,7 @@ tests:
     input_series:
       - series: 'chat_guard_checks_total{verdict="error"}'
         values: '0+2x40'
-      - series: 'chat_guard_checks_total{verdict="pass"}'
+      - series: 'chat_guard_checks_total{verdict="benign"}'
         values: '0+8x40'
     alert_rule_test:
       - eval_time: 25m
@@ -2048,6 +2140,18 @@ tests:
           - exp_labels: { severity: warning }
             exp_annotations:
               summary: Over 10% of guard checks are failing; those turns get the fixed unavailable reply.
+
+  - interval: 1m
+    input_series:
+      - series: 'chat_streams_total{status="timeout"}'
+        values: '0 0 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: TurnTimeouts
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Chat turns are hitting CHAT_TURN_TIMEOUT_SECONDS; a provider or dependency is stalling.
 ```
 
 - [ ] **Step 2: Run them to verify they fail**
@@ -2055,7 +2159,7 @@ tests:
 Run from the repo root (Git Bash needs `MSYS_NO_PATHCONV` and a Windows path for the mount):
 
 ```bash
-MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W)/infra/prometheus:/p" --entrypoint promtool prom/prometheus:latest test rules /p/rules-test/chat.test.yml
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W)/infra/prometheus:/p" --entrypoint promtool prom/prometheus:v3.12.0 test rules /p/rules-test/chat.test.yml
 ```
 
 Expected: FAIL, rule file `../rules/chat.yml` not found.
@@ -2099,6 +2203,13 @@ groups:
         labels: { severity: warning }
         annotations:
           summary: Over 10% of guard checks are failing; those turns get the fixed unavailable reply.
+
+      # Any timeout means something stalled; a healthy turn ends well inside it.
+      - alert: TurnTimeouts
+        expr: sum(increase(chat_streams_total{status="timeout"}[10m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: Chat turns are hitting CHAT_TURN_TIMEOUT_SECONDS; a provider or dependency is stalling.
 ```
 
 - [ ] **Step 4: Run the rule tests to verify they pass**
@@ -2181,11 +2292,147 @@ git commit -m "feat(alerting): spend, refusal and guard alerts through Alertmana
 
 ---
 
-### Task 10: Documentation
+### Task 10: Host hardening: observability ports, Docker socket, pinned images
+
+**Files:**
+- Modify: `docker-compose.yml` (prometheus, loki, tempo, promtail, grafana, alertmanager; new `docker-socket-proxy` service and `socket-proxy` network)
+- Modify: `infra/prometheus/prometheus.yml` (`docker_sd_configs.host`)
+- Modify: `infra/promtail/promtail-config.yml` (`docker_sd_configs.host`)
+- Modify: `services/chat-service/Dockerfile`, `services/order-service/Dockerfile`, `services/inventory-service/Dockerfile`
+
+**Interfaces:**
+- Consumes: Task 9's `alertmanager` service and the prometheus `depends_on` it adds.
+- Produces: only Envoy `:8080` listens on all host interfaces; observability ports bind to `127.0.0.1`. Docker API reachable only through `docker-socket-proxy:2375`, read-only, on a network only prometheus and promtail join.
+
+Three problems, all in compose:
+1. **Grafana (anonymous Admin), Loki, Tempo, Prometheus and Alertmanager publish unauthenticated APIs on every host interface.** On a public VM, anyone can be Grafana admin, read or forge logs in Loki, and inject traces through Tempo's OTLP port. Binding them to `127.0.0.1` makes them unreachable from outside whatever the firewall says, and reachable for the author over an SSH tunnel.
+2. **Prometheus and Promtail mount `/var/run/docker.sock`.** Access to the socket gives root on the host: anyone who can call it can start a privileged container that mounts `/`. `:ro` does not help, because it limits the socket file, not the API behind it. A proxy forwards only the read calls service discovery needs.
+3. **Five images float on `:latest`, and the Go services run as root on `alpine:latest`.** Each pull can bring a different build. The pins below are the versions this stack runs today, so pinning changes nothing at runtime.
+
+- [ ] **Step 1: Record the current exposure (the failing check)**
+
+Run: `docker compose up -d && docker compose ps --format '{{.Name}}\t{{.Ports}}'`
+Expected: `0.0.0.0` on 3000, 3100, 3200, 4317, 9090, 9093, and 8080.
+
+Run: `docker compose exec chat-service id -u`
+Expected: `0`.
+
+- [ ] **Step 2: Socket proxy**
+
+`docker-compose.yml`, new service next to prometheus:
+
+```yaml
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    container_name: docker-socket-proxy
+    # The Docker socket is root on the host. This passes only the reads that
+    # discovery makes: container lists and logs, and networks. Writes stay refused.
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy
+```
+
+Under top-level `networks:`:
+
+```yaml
+  # Only the discovery clients join: container inspect returns every
+  # container's env, secrets included.
+  socket-proxy:
+    internal: true
+```
+
+prometheus service: remove `user: root` and the `docker.sock` volume, add `socket-proxy` to its `networks`, and `docker-socket-proxy` to its `depends_on` (next to Task 9's `alertmanager`).
+
+promtail service: remove the `docker.sock` volume, add `socket-proxy` to its `networks`, and `docker-socket-proxy` to its `depends_on` (next to `loki`).
+
+`infra/prometheus/prometheus.yml` and `infra/promtail/promtail-config.yml`: `host: unix:///var/run/docker.sock` → `host: tcp://docker-socket-proxy:2375`.
+
+- [ ] **Step 3: Bind observability ports to loopback**
+
+`docker-compose.yml`:
+
+| Service | Before | After |
+|---|---|---|
+| prometheus | `"9090:9090"` | `"127.0.0.1:9090:9090"` |
+| loki | `"3100:3100"` | `"127.0.0.1:3100:3100"` |
+| tempo | `"3200:3200"`, `"4317:4317"` | `"127.0.0.1:3200:3200"` only. Services export OTLP over `micro-network` (`tempo:4317`), so nothing on the host needs it |
+| grafana | `"3000:3000"` | `"127.0.0.1:3000:3000"` |
+| alertmanager | `"9093:9093"` | `"127.0.0.1:9093:9093"` |
+
+Above grafana's `GF_AUTH_ANONYMOUS_ORG_ROLE=Admin`:
+
+```yaml
+      # Safe only while the port binds to loopback; step 7 must not publish it.
+```
+
+Above the prometheus `ports:` list:
+
+```yaml
+    # Observability binds to loopback: unauthenticated APIs, reached over an
+    # SSH tunnel on a public host. Envoy :8080 is the only public port.
+```
+
+- [ ] **Step 4: Pin images**
+
+`docker-compose.yml`:
+- `prom/prometheus:latest` → `prom/prometheus:v3.12.0`
+- `grafana/loki:latest` → `grafana/loki:3.7.2`
+- `grafana/tempo:latest` → `grafana/tempo:3.0.0`
+- `grafana/promtail:latest` → `grafana/promtail:3.6.8`
+- `grafana/grafana:latest` → `grafana/grafana:13.0.2`
+
+Leave the commented-out `mongo:latest` alone; it is pinned when the order path is restored.
+
+All three service Dockerfiles: `FROM alpine:latest` → `FROM alpine:3.24.2`, and before `CMD`:
+
+```dockerfile
+USER 65534:65534
+```
+
+(`nobody`. The services bind ports above 1024 and write nothing to disk; ingest reads `/workspace` read-only.)
+
+- [ ] **Step 5: Verify**
+
+Run: `docker compose up --build -d && docker compose ps --format '{{.Name}}\t{{.Ports}}'`
+Expected: only envoy shows `0.0.0.0:8080`; every other published port shows `127.0.0.1`; no `4317`.
+
+Run: `curl -s localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"' | sort | uniq -c`
+Expected: every target `up` (discovery still works through the proxy).
+
+Run: `curl -sG localhost:3100/loki/api/v1/label/container/values`
+Expected: the list includes `chat-service` (promtail still reads logs through the proxy).
+
+Run: `docker compose exec prometheus wget -q -O- --post-data= http://docker-socket-proxy:2375/containers/envoy-proxy/stop; echo "exit $?"`
+Expected: a non-zero exit (403 from the proxy), and `docker compose ps` still shows envoy running.
+
+Run: `docker compose exec chat-service wget -q -T 3 -O- http://docker-socket-proxy:2375/_ping; echo "exit $?"`
+Expected: a non-zero exit. The name does not resolve from `micro-network`.
+
+Run: `docker compose exec chat-service id -u`
+Expected: `65534`.
+
+If the llm stack is available: `docker compose --profile llm up -d && docker compose run --rm ingest`
+Expected: the summary prints, with no permission errors reading `/workspace`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add docker-compose.yml infra/prometheus/prometheus.yml infra/promtail/promtail-config.yml services/*/Dockerfile
+git commit -m "fix(infra): loopback-bind observability, proxy the Docker socket, pin images"
+```
+
+---
+
+### Task 11: Documentation
 
 **Files:**
 - Modify: `docs/roadmap.md`
 - Modify: `CLAUDE.md`
+- Modify: `README.md`
 
 - [ ] **Step 1: Roadmap**
 
@@ -2200,20 +2447,25 @@ assistant down for everyone. The budget is per visitor first.
   reported usage, condense included; balance returned on `Done` and `Warmup`
 - Embedding tokens counted in `chat_embed_tokens_total`, not charged
 - Concurrent stream caps, refused at once rather than queued
-- `max_tokens` per reply, bounding how far one turn overshoots a budget
+- `max_tokens` per reply; turns in flight may finish past a budget, so the
+  provider cap sits above it by `MAX_STREAMS_GLOBAL` worst-case turns
 - Envoy v1.39: per-IP rate limit, 64 KB body limit, CORS locked to one origin,
   parked order route removed
 - Prometheus alert rules through Alertmanager: spend pace, cap hits, refusal
-  spikes, a degraded guard
+  spikes, a degraded guard, turn timeouts
 - In memory by choice: a restart resets budgets; the provider cap backs it
+- Observability bound to loopback, the Docker socket behind a read-only
+  proxy, images pinned, Go services running as `nobody`
 ```
 
-Remove "Keep crawlers from triggering `Warmup`" (covered by `warmCache` and the rate limit). In section 7 add bullets: `xff_num_trusted_hops` and the CORS origin set for the chosen front proxy and domain; Alertmanager receiver; firewall closes `:9093` with the other observability ports. In section 11 add: "A shared budget ledger before chat-service gets a second replica." Update *Last updated*.
+Remove "Keep crawlers from triggering `Warmup`" (covered by `warmCache` and the rate limit). In section 7 add bullets: `xff_num_trusted_hops` and the CORS origin set for the chosen front proxy and domain; Alertmanager receiver; observability reached over an SSH tunnel, since it binds to loopback; Grafana's anonymous Admin must go before any of it is published; a privacy notice (IP held in memory until UTC midnight, chat text sent to the named LLM provider) and the provider's DPA, transfer basis and training opt-out; ingest run from a clean checkout, so untracked files in allowlisted directories never reach the index; CSP, HSTS and `frame-ancestors 'none'` wherever the frontend is served; an Envoy overload manager cap on downstream connections; check whether the chosen provider takes `max_tokens` or wants `max_completion_tokens`, as OpenAI's newer models do. In section 10 add: "Promtail to Grafana Alloy: Promtail is deprecated." In section 11 add: "A shared budget ledger before chat-service gets a second replica." Update *Last updated*.
 
 - [ ] **Step 2: CLAUDE.md**
 
 - **Parked** paragraph: "Their code, Envoy route and scrape jobs stay" → "Their code, Envoy cluster and scrape jobs stay; the route is commented out in `envoy.yaml`".
-- Endpoints line: add "Alertmanager `:9093`".
+- **Request path** paragraph: "`/chat.v1.ChatService/` → `chat_service_cluster`, everything else → `order_service_cluster`. Both routes set" → "`/chat.v1.ChatService/` → `chat_service_cluster`; any other path is a 404 while the order path is parked. The chat route sets". After the `timeout: 0s` sentence, add "The chat route also caps a stream at `max_stream_duration: 180s`, a backstop above chat-service's own `CHAT_TURN_TIMEOUT_SECONDS`."
+- Endpoints line: add "Alertmanager `:9093`", and say every endpoint except Envoy binds to `127.0.0.1`. Change "Grafana `:3000` (anonymous admin)" to "Grafana `:3000` (anonymous admin, safe only on loopback)". Drop Tempo's `:4317` if it is listed.
+- **Cross-cutting conventions**, add: "**Nothing mounts the Docker socket but `docker-socket-proxy`.** It passes container and network reads only, on the internal `socket-proxy` network that only prometheus and promtail join; discovery points at `tcp://docker-socket-proxy:2375`."
 - Under **Architecture**, after **LLM security**, add:
 
 ```markdown
@@ -2224,12 +2476,27 @@ Remove "Keep crawlers from triggering `Warmup`" (covered by `warmCache` and the 
 
 ```bash
 bash infra/envoy/check-edge.sh                         # edge limits, stack up
-MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W)/infra/prometheus:/p" --entrypoint promtool prom/prometheus:latest test rules /p/rules-test/chat.test.yml
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W)/infra/prometheus:/p" --entrypoint promtool prom/prometheus:v3.12.0 test rules /p/rules-test/chat.test.yml
 ```
 
-- [ ] **Step 3: Commit**
+- [ ] **Step 3: README.md**
+
+`README.md` is portfolio surface; it must describe what shipped, in its own voice:
+- "What's in it" table, `infra/envoy` row: add "per-IP rate limiting, a 64 KB body limit, CORS locked to one origin".
+- `services/chat-service` row: add "Per-visitor and site-wide daily token budgets, concurrent stream caps and a per-turn deadline."
+- Add a row for `infra/alertmanager`: "Receives the cost and health alerts Prometheus evaluates; no receiver until deployment."
+- **Engineering notes**, add a bullet after the LLM security one:
+
+```markdown
+- **Cost has a ceiling per visitor, not just per site.** A hosted model's spend cap is global, so one visitor reaching it would take the assistant down for everyone. Envoy rate-limits each address; chat-service caps each visitor's daily tokens, the site's, and concurrent streams, and refuses with a reason the frontend turns into plain copy. Spend pace and cap hits alert through Alertmanager.
+```
+
+- **Running it locally**: after the Grafana line, add "Alertmanager at `:9093`. All of them bind to `127.0.0.1` only; Envoy `:8080` is the one public port." Add, after the first `cp`: "An existing `.env` needs the budget block from `.env.example`; chat-service refuses to start without it."
+- **Status**: move web security from "Next" to "Working today".
+
+- [ ] **Step 4: Commit**
 
 ```bash
-git add docs/roadmap.md CLAUDE.md
-git commit -m "docs: record web security in the roadmap and CLAUDE.md"
+git add docs/roadmap.md CLAUDE.md README.md
+git commit -m "docs: record web security in the roadmap, CLAUDE.md and README"
 ```
