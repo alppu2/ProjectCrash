@@ -5,7 +5,9 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -59,14 +61,15 @@ func (g *fakeGrounder) withSystem(system string) Responder {
 }
 
 type fakeCondenser struct {
-	out  string
-	err  error
-	seen int
+	out   string
+	usage Usage
+	err   error
+	seen  atomic.Int32 // read by slowFlagGuard while the grounding goroutine writes it
 }
 
-func (c *fakeCondenser) condense(_ context.Context, _ []*chatpb.Message) (string, error) {
-	c.seen++
-	return c.out, c.err
+func (c *fakeCondenser) condense(_ context.Context, _ []*chatpb.Message) (string, Usage, error) {
+	c.seen.Add(1)
+	return c.out, c.usage, c.err
 }
 
 func hit(id, kind, source, text string, score float32) rag.Hit {
@@ -223,8 +226,8 @@ func TestCondensationRunsOnlyWithHistory(t *testing.T) {
 	s := &fakeSearcher{byKind: map[string][]rag.Hit{}}
 	c := &fakeCondenser{out: "how is the chat service tested?"}
 	drain(t, newTestRetriever(s, &fakeGrounder{}, c), userTurn("what about testing?"))
-	if c.seen != 0 {
-		t.Errorf("condenser ran %d times on a first turn, want 0", c.seen)
+	if c.seen.Load() != 0 {
+		t.Errorf("condenser ran %d times on a first turn, want 0", c.seen.Load())
 	}
 
 	c2 := &fakeCondenser{out: "how is the chat service tested?"}
@@ -233,8 +236,8 @@ func TestCondensationRunsOnlyWithHistory(t *testing.T) {
 		{Role: chatpb.Role_ROLE_ASSISTANT, Content: "It streams over gRPC-Web."},
 		{Role: chatpb.Role_ROLE_USER, Content: "what about testing?"},
 	})
-	if c2.seen != 1 {
-		t.Errorf("condenser ran %d times with history, want 1", c2.seen)
+	if c2.seen.Load() != 1 {
+		t.Errorf("condenser ran %d times with history, want 1", c2.seen.Load())
 	}
 }
 
@@ -591,4 +594,55 @@ func TestGuardSkipsAnsweredTurns(t *testing.T) {
 	if len(fg.seen) != 1 || fg.seen[0] != "q2" {
 		t.Errorf("guard saw %q, want only the unanswered q2", fg.seen)
 	}
+}
+
+var withHistory = []*chatpb.Message{
+	{Role: chatpb.Role_ROLE_USER, Content: "tell me about the chat service"},
+	{Role: chatpb.Role_ROLE_ASSISTANT, Content: "It streams over gRPC-Web."},
+	{Role: chatpb.Role_ROLE_USER, Content: "what about testing?"},
+}
+
+func TestStreamChargesTheCondenseCall(t *testing.T) {
+	c := &fakeCondenser{out: "how is it tested?", usage: Usage{InputTokens: 100, OutputTokens: 6}}
+	r := newTestRetriever(&fakeSearcher{byKind: map[string][]rag.Hit{}}, &fakeGrounder{}, c)
+
+	usage, err := r.Stream(context.Background(), &chatpb.ChatRequest{Messages: withHistory}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The echo inner reply reports its 3 words as output tokens.
+	if usage.InputTokens != 100 || usage.OutputTokens != 9 || usage.StopReason != "end_turn" {
+		t.Errorf("usage = %+v, want condense + reply tokens and the reply's stop reason", usage)
+	}
+}
+
+// Condense runs alongside the guard. A flood of flagged turns with long
+// histories would otherwise spend input tokens no budget sees.
+func TestRefusedTurnIsChargedForACompletedCondense(t *testing.T) {
+	c := &fakeCondenser{out: "q", usage: Usage{InputTokens: 100, OutputTokens: 6}}
+	r := newTestRetriever(&fakeSearcher{byKind: map[string][]rag.Hit{}}, &fakeGrounder{}, c)
+	r.Inner = &countingGrounder{}
+	r.Guard = &slowFlagGuard{after: c}
+
+	usage, err := r.Stream(context.Background(), &chatpb.ChatRequest{Messages: withHistory}, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.StopReason != "guarded" || usage.InputTokens != 100 || usage.OutputTokens != 6 {
+		t.Errorf("usage = %+v, want the refusal charged the completed condense", usage)
+	}
+}
+
+// slowFlagGuard flags every turn, but only once the condenser has run, so the
+// test does not depend on goroutine scheduling.
+type slowFlagGuard struct{ after *fakeCondenser }
+
+func (g *slowFlagGuard) Check(ctx context.Context, _ []string) (guard.Verdict, error) {
+	for g.after.seen.Load() == 0 {
+		if err := ctx.Err(); err != nil {
+			return guard.Verdict{}, err
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return guard.Verdict{Flagged: true, Score: 0.99}, nil
 }

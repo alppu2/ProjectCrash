@@ -26,7 +26,7 @@ type grounder interface {
 }
 
 type condenser interface {
-	condense(ctx context.Context, msgs []*chatpb.Message) (string, error)
+	condense(ctx context.Context, msgs []*chatpb.Message) (string, Usage, error)
 }
 
 type warmer interface {
@@ -59,23 +59,26 @@ func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatReques
 	defer cancelGround()
 	type grounded struct {
 		system string
+		usage  Usage
 		err    error
 	}
 	done := make(chan grounded, 1)
 	go func() {
-		system, err := r.ground(groundCtx, msgs)
-		done <- grounded{system, err}
+		system, usage, err := r.ground(groundCtx, msgs)
+		done <- grounded{system, usage, err}
 	}()
 
 	if reply, stop, err := r.screen(ctx, msgs); err != nil || reply != "" {
 		cancelGround()
+		// A condense that finished before the cancel was billed; charge it.
+		condensed := (<-done).usage
 		if err != nil {
-			return Usage{}, err
+			return condensed, err
 		}
 		if err := emit(reply); err != nil {
-			return Usage{}, err
+			return condensed, err
 		}
-		return Usage{StopReason: stop}, nil
+		return Usage{StopReason: stop}.plus(condensed), nil
 	}
 
 	g := <-done
@@ -83,12 +86,13 @@ func (r *RetrievingResponder) Stream(ctx context.Context, req *chatpb.ChatReques
 	if g.err != nil {
 		// Bare, so classifyOutcome sees a hangup rather than a dead provider.
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return Usage{}, ctxErr
+			return g.usage, ctxErr
 		}
 		obs.LogWithTrace(ctx, slog.Default()).Warn("retrieval unavailable, degrading the reply", "error", g.err)
 		system = unavailableEnvelope
 	}
-	return r.Inner.withSystem(system).Stream(ctx, req, emit)
+	usage, err := r.Inner.withSystem(system).Stream(ctx, req, emit)
+	return usage.plus(g.usage), err
 }
 
 // screen returns the fixed reply for a turn that must not reach the model, or
@@ -163,52 +167,52 @@ func (r *RetrievingResponder) Warmup(ctx context.Context) error {
 
 // ground builds one turn's system prompt. Every error path here is soft — the
 // caller degrades — so it reports failures through the metrics and returns.
-func (r *RetrievingResponder) ground(ctx context.Context, msgs []*chatpb.Message) (string, error) {
-	query := r.query(ctx, msgs)
+func (r *RetrievingResponder) ground(ctx context.Context, msgs []*chatpb.Message) (string, Usage, error) {
+	query, usage := r.query(ctx, msgs)
 
 	embedStart := time.Now()
 	vecs, err := r.Embedder.Embed(ctx, []string{query})
 	chatEmbedDuration.Observe(time.Since(embedStart).Seconds())
 	if err != nil {
-		return "", retrievalError("embed_failed", err)
+		return "", usage, retrievalError("embed_failed", err)
 	}
 	if len(vecs) != 1 {
-		return "", retrievalError("decode_error", fmt.Errorf("embedder returned %d vectors for one query", len(vecs)))
+		return "", usage, retrievalError("decode_error", fmt.Errorf("embedder returned %d vectors for one query", len(vecs)))
 	}
 
 	searchStart := time.Now()
 	hits, err := r.search(ctx, vecs[0])
 	chatRetrievalDuration.Observe(time.Since(searchStart).Seconds())
 	if err != nil {
-		return "", retrievalError(searchReason(err), err)
+		return "", usage, retrievalError(searchReason(err), err)
 	}
 
 	chatRetrievalChunks.Observe(float64(len(hits)))
 	if len(hits) == 0 {
 		// Not an error. The envelope's "say so plainly" rule takes over, which
 		// is the honest answer to a question the corpus cannot answer.
-		return corpusEnvelope, nil
+		return corpusEnvelope, usage, nil
 	}
-	return corpusEnvelope + citationRule + "\n\n" + assemblePrompt(hits) + "\n" + sourcesReminder, nil
+	return corpusEnvelope + citationRule + "\n\n" + assemblePrompt(hits) + "\n" + sourcesReminder, usage, nil
 }
 
 // query folds history into a standalone question. A follow-up carries its
 // meaning in the history, not its own words.
-func (r *RetrievingResponder) query(ctx context.Context, msgs []*chatpb.Message) string {
+func (r *RetrievingResponder) query(ctx context.Context, msgs []*chatpb.Message) (string, Usage) {
 	raw := lastContent(msgs)
 	if len(msgs) < 2 || r.Condenser == nil {
-		return raw
+		return raw, Usage{}
 	}
 
 	start := time.Now()
-	condensed, err := r.Condenser.condense(ctx, msgs)
+	condensed, usage, err := r.Condenser.condense(ctx, msgs)
 	chatCondenseDuration.Observe(time.Since(start).Seconds())
 	if err != nil {
 		// Degraded retrieval beats no answer.
 		obs.LogWithTrace(ctx, slog.Default()).Warn("condensation failed, embedding the raw turn", "error", err)
-		return raw
+		return raw, usage
 	}
-	return condensed
+	return condensed, usage
 }
 
 // search runs the quota'd pair. Two searches rather than one because the floor

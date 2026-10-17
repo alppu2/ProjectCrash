@@ -21,9 +21,10 @@ type Config struct {
 	Kind      string
 	EchoDelay time.Duration
 
-	BaseURL string
-	Model   string
-	APIKey  string
+	BaseURL         string
+	Model           string
+	MaxOutputTokens int
+	APIKey          string
 
 	EmbedBaseURL string
 	EmbedModel   string
@@ -50,10 +51,11 @@ func New(ctx context.Context, cfg Config) (Responder, error) {
 	case "llm":
 		inner := &OpenAIResponder{
 			// The request path is appended directly.
-			BaseURL: strings.TrimSuffix(cfg.BaseURL, "/"),
-			Model:   cfg.Model,
-			APIKey:  cfg.APIKey,
-			Client:  newLLMClient(),
+			BaseURL:   strings.TrimSuffix(cfg.BaseURL, "/"),
+			Model:     cfg.Model,
+			MaxTokens: cfg.MaxOutputTokens,
+			APIKey:    cfg.APIKey,
+			Client:    newLLMClient(),
 		}
 
 		retriever, err := newRetriever(ctx, cfg, inner)

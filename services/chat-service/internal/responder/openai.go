@@ -27,11 +27,12 @@ const (
 // OpenAIResponder streams a reply from any provider speaking the
 // OpenAI-compatible /chat/completions API.
 type OpenAIResponder struct {
-	BaseURL string       // no trailing slash
-	Model   string       // e.g. llama3.2:3b
-	APIKey  string       // empty for a local Ollama; sent as a Bearer token when set
-	System  string       // grounding prompt; empty sends none
-	Client  *http.Client // injected so tests can point at an httptest server
+	BaseURL   string       // no trailing slash
+	Model     string       // e.g. llama3.2:3b
+	APIKey    string       // empty for a local Ollama; sent as a Bearer token when set
+	MaxTokens int          // per-turn output ceiling; 0 sends none
+	System    string       // grounding prompt; empty sends none
+	Client    *http.Client // injected so tests can point at an httptest server
 }
 
 // newLLMClient sets no Client.Timeout — a long generation is normal — but
@@ -57,6 +58,7 @@ type openAIRequest struct {
 	Stream        bool                `json:"stream"`
 	StreamOptions openAIStreamOptions `json:"stream_options"`
 	Messages      []openAIMessage     `json:"messages"`
+	MaxTokens     int                 `json:"max_tokens,omitempty"`
 }
 
 // openAIChunk is one SSE frame's JSON payload. Text deltas, finish_reason and
@@ -119,6 +121,7 @@ func (o *OpenAIResponder) Stream(ctx context.Context, req *chatpb.ChatRequest, e
 		Stream:        true,
 		StreamOptions: openAIStreamOptions{IncludeUsage: true},
 		Messages:      o.messages(req.GetMessages()),
+		MaxTokens:     o.MaxTokens,
 	})
 	if err != nil {
 		return usage, providerError("config_error", codes.Internal, "encoding completions request: %v", err)
@@ -288,29 +291,29 @@ const condenseMaxTokens = 96
 
 // condense runs a non-streaming completion against the same model. It lands
 // ahead of the first token, so its latency is measured separately.
-func (o *OpenAIResponder) condense(ctx context.Context, msgs []*chatpb.Message) (string, error) {
+func (o *OpenAIResponder) condense(ctx context.Context, msgs []*chatpb.Message) (string, Usage, error) {
 	payload := append([]openAIMessage{{Role: "system", Content: condensePrompt}}, toOpenAIMessages(msgs)...)
-	out, err := o.complete(ctx, "condense", condenseMaxTokens, payload)
+	out, usage, err := o.complete(ctx, "condense", condenseMaxTokens, payload)
 	if err != nil {
-		return "", err
+		return "", usage, err
 	}
 	out = strings.TrimSpace(out)
 	if out == "" {
-		return "", fmt.Errorf("condense returned no content")
+		return "", usage, fmt.Errorf("condense returned no content")
 	}
-	return out, nil
+	return out, usage, nil
 }
 
 // warm loads the model on a local provider, and on a hosted one proves the
 // URL, key, model and quota. The one-token reply is discarded.
 func (o *OpenAIResponder) warm(ctx context.Context) error {
-	_, err := o.complete(ctx, "warmup", 1, []openAIMessage{{Role: "user", Content: "ping"}})
+	_, _, err := o.complete(ctx, "warmup", 1, []openAIMessage{{Role: "user", Content: "ping"}})
 	return err
 }
 
 // complete runs one non-streaming completion and returns the first choice's
 // content, which may be empty. op prefixes every error.
-func (o *OpenAIResponder) complete(ctx context.Context, op string, maxTokens int, msgs []openAIMessage) (string, error) {
+func (o *OpenAIResponder) complete(ctx context.Context, op string, maxTokens int, msgs []openAIMessage) (string, Usage, error) {
 	body, err := json.Marshal(struct {
 		Model     string          `json:"model"`
 		Stream    bool            `json:"stream"`
@@ -318,12 +321,12 @@ func (o *OpenAIResponder) complete(ctx context.Context, op string, maxTokens int
 		Messages  []openAIMessage `json:"messages"`
 	}{Model: o.Model, Stream: false, MaxTokens: maxTokens, Messages: msgs})
 	if err != nil {
-		return "", fmt.Errorf("encoding %s request: %w", op, err)
+		return "", Usage{}, fmt.Errorf("encoding %s request: %w", op, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, o.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("building %s request: %w", op, err)
+		return "", Usage{}, fmt.Errorf("building %s request: %w", op, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if o.APIKey != "" {
@@ -333,14 +336,14 @@ func (o *OpenAIResponder) complete(ctx context.Context, op string, maxTokens int
 	resp, err := o.Client.Do(req)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return "", ctxErr
+			return "", Usage{}, ctxErr
 		}
-		return "", fmt.Errorf("%s request failed: %w", op, err)
+		return "", Usage{}, fmt.Errorf("%s request failed: %w", op, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%s returned HTTP %d: %s", op, resp.StatusCode, readErrorBody(resp.Body))
+		return "", Usage{}, fmt.Errorf("%s returned HTTP %d: %s", op, resp.StatusCode, readErrorBody(resp.Body))
 	}
 
 	var out struct {
@@ -349,12 +352,20 @@ func (o *OpenAIResponder) complete(ctx context.Context, op string, maxTokens int
 				Content string `json:"content"`
 			} `json:"message"`
 		} `json:"choices"`
+		Usage *struct {
+			PromptTokens     int32 `json:"prompt_tokens"`
+			CompletionTokens int32 `json:"completion_tokens"`
+		} `json:"usage"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", fmt.Errorf("decoding %s response: %w", op, err)
+		return "", Usage{}, fmt.Errorf("decoding %s response: %w", op, err)
+	}
+	var usage Usage
+	if out.Usage != nil {
+		usage = Usage{InputTokens: out.Usage.PromptTokens, OutputTokens: out.Usage.CompletionTokens}
 	}
 	if len(out.Choices) == 0 {
-		return "", nil
+		return "", usage, nil
 	}
-	return out.Choices[0].Message.Content, nil
+	return out.Choices[0].Message.Content, usage, nil
 }

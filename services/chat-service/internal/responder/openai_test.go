@@ -129,7 +129,8 @@ func TestOpenAIResponderRequestShape(t *testing.T) {
 		StreamOptions struct {
 			IncludeUsage bool `json:"include_usage"`
 		} `json:"stream_options"`
-		Messages []capturedMessage `json:"messages"`
+		Messages  []capturedMessage `json:"messages"`
+		MaxTokens int               `json:"max_tokens"`
 	}
 
 	var body captured
@@ -145,6 +146,7 @@ func TestOpenAIResponderRequestShape(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	r := newTestLLM(srv.URL)
+	r.MaxTokens = 800
 	req := &chatpb.ChatRequest{Messages: []*chatpb.Message{
 		{Role: chatpb.Role_ROLE_USER, Content: "first"},
 		{Role: chatpb.Role_ROLE_ASSISTANT, Content: "reply"},
@@ -165,6 +167,10 @@ func TestOpenAIResponderRequestShape(t *testing.T) {
 	}
 	if !body.StreamOptions.IncludeUsage {
 		t.Error("stream_options.include_usage = false, want true — without it there are no token counts")
+	}
+	// Without it one turn's output is unbounded, and so is its cost.
+	if body.MaxTokens != 800 {
+		t.Errorf("max_tokens = %d, want 800", body.MaxTokens)
 	}
 	// No header at all: "Bearer " with nothing after it is malformed.
 	if auth != "" {
@@ -712,7 +718,7 @@ func TestOpenAIResponderCondenseRequestShape(t *testing.T) {
 	srv := completionServer(t, "  What did Aleksi build with Go?\n", &got)
 
 	o := &OpenAIResponder{BaseURL: srv.URL, Model: "qwen3", System: "grounding", Client: srv.Client()}
-	out, err := o.condense(context.Background(), []*chatpb.Message{
+	out, _, err := o.condense(context.Background(), []*chatpb.Message{
 		{Role: chatpb.Role_ROLE_USER, Content: "what languages does he use?"},
 		{Role: chatpb.Role_ROLE_ASSISTANT, Content: "Go and TypeScript."},
 		{Role: chatpb.Role_ROLE_USER, Content: "what did he build with the first?"},
@@ -748,7 +754,7 @@ func TestOpenAIResponderCondenseRejectsEmptyRewrite(t *testing.T) {
 		var got completionRequest
 		srv := completionServer(t, content, &got)
 		o := &OpenAIResponder{BaseURL: srv.URL, Model: "m", Client: srv.Client()}
-		out, err := o.condense(context.Background(), []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hi"}})
+		out, _, err := o.condense(context.Background(), []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hi"}})
 		if err == nil {
 			t.Errorf("condense() with reply %q = %q, nil; want an error", content, out)
 		}
@@ -762,7 +768,7 @@ func TestOpenAIResponderCondenseSurfacesHTTPError(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	o := &OpenAIResponder{BaseURL: srv.URL, Model: "m", Client: srv.Client()}
-	_, err := o.condense(context.Background(), []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hi"}})
+	_, _, err := o.condense(context.Background(), []*chatpb.Message{{Role: chatpb.Role_ROLE_USER, Content: "hi"}})
 	if err == nil || !strings.Contains(err.Error(), "condense returned HTTP 503") {
 		t.Errorf("condense() error = %v, want one naming condense and HTTP 503", err)
 	}
@@ -796,5 +802,30 @@ func TestOpenAIResponderWithSystemLeavesReceiverUntouched(t *testing.T) {
 	}
 	if len(got.Messages) == 0 || got.Messages[0] != (openAIMessage{Role: "system", Content: "turn prompt"}) {
 		t.Errorf("first message = %+v, want the turn's system prompt", got.Messages)
+	}
+}
+
+// The budget is charged from Usage; a condense the provider billed but we did
+// not count is spend outside every visitor's cap.
+func TestOpenAIResponderCondenseReportsUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]any{"content": "standalone?"}}},
+			"usage":   map[string]any{"prompt_tokens": 120, "completion_tokens": 7},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	o := &OpenAIResponder{BaseURL: srv.URL, Model: "m", Client: srv.Client()}
+	_, usage, err := o.condense(context.Background(), []*chatpb.Message{
+		{Role: chatpb.Role_ROLE_USER, Content: "a"},
+		{Role: chatpb.Role_ROLE_ASSISTANT, Content: "b"},
+		{Role: chatpb.Role_ROLE_USER, Content: "c"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.InputTokens != 120 || usage.OutputTokens != 7 {
+		t.Errorf("usage = %+v, want 120 in, 7 out", usage)
 	}
 }
