@@ -322,7 +322,7 @@ services:
       - tempo
 
   envoy:
-    image: envoyproxy/envoy:v1.25-latest
+    image: envoyproxy/envoy:v1.39.3
     container_name: envoy-proxy
     volumes:
       - ./infra/envoy/envoy.yaml:/etc/envoy/envoy.yaml
