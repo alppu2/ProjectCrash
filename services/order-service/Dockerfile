@@ -7,7 +7,8 @@ COPY services/order-service/orders/ orders/
 
 RUN CGO_ENABLED=0 GOOS=linux go build -o /order-service .
 
-FROM alpine:latest
+FROM alpine:3.24.2
 COPY --from=builder /order-service /order-service
 EXPOSE 50051
+USER 65534:65534
 CMD ["/order-service"]
