@@ -1,0 +1,10 @@
+# Step 7 picks a real receiver. Until then alerts show at :9093 and in Grafana,
+# and are delivered nowhere.
+route:
+  receiver: none
+  group_by: [alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+receivers:
+  - name: none

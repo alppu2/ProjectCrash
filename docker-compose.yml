@@ -262,9 +262,22 @@ services:
     user: root
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./infra/prometheus/rules:/etc/prometheus/rules
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       - "9090:9090"
+    depends_on:
+      - alertmanager
+    networks:
+      - micro-network
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: alertmanager
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    ports:
+      - "9093:9093"
     networks:
       - micro-network
 
