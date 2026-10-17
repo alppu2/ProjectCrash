@@ -23,7 +23,7 @@ Stack:
 
 ```bash
 docker compose up --build                              # RESPONDER=echo: no model, no GPU
-docker compose --profile llm up --build -d             # + ollama, qdrant; needs RESPONDER=llm
+docker compose --profile llm up --build -d             # + ollama, qdrant, guard; needs RESPONDER=llm
 docker compose run --rm ingest                         # build/refresh the retrieval index; --full re-embeds all
 npx promptfoo eval -c evals/redteam/promptfooconfig.yaml   # red-team suite, stack up with --profile llm
 docker compose logs -f chat-service
