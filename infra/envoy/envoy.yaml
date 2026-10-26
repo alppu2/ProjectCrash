@@ -10,8 +10,9 @@ static_resources:
                 "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
                 codec_type: auto
                 stat_prefix: ingress_http
-                # Every per-visitor limit keys on the address resolved here.
-                # Step 7 raises the hop count to the proxies put in front.
+                # Every per-visitor limit keys on the address resolved here, so Envoy must
+                # be the edge and get the visitor's address un-NATed (k3s: no Traefik,
+                # externalTrafficPolicy: Local). A proxy in front means raising the hop count.
                 use_remote_address: true
                 xff_num_trusted_hops: 0
                 # Slow-header connections are cut; no request_timeout, which
@@ -46,7 +47,7 @@ static_resources:
                         envoy.filters.http.cors:
                           "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
                           allow_origin_string_match:
-                            # NOTE: step 7 replaces this with the public origin.
+                            # Dev origin; production needs the public one.
                             - exact: http://localhost:5173
                           allow_methods: POST, OPTIONS
                           allow_headers: keep-alive,user-agent,cache-control,content-type,content-transfer-encoding,x-accept-content-transfer-encoding,x-accept-response-streaming,x-user-agent,x-grpc-web,grpc-timeout,connect-protocol-version,connect-timeout-ms

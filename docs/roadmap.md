@@ -127,8 +127,10 @@ Remaining:
 - TLS and a registered domain
 - Env-driven frontend `baseUrl`
 - VM sizing: the guard needs ~620 MB RAM, CPU only, about 0.65 s per check
-- `xff_num_trusted_hops` and the CORS origin set for the chosen front proxy
-  and domain
+- Envoy stays the edge and receives the visitor's address un-NATed, so
+  `xff_num_trusted_hops` stays 0; the CORS origin set to the domain. Check
+  once that chat-service logs a public `x-client-ip`, not the private-address
+  warning
 - An Alertmanager receiver
 - Observability reached over an SSH tunnel, since it binds to loopback;
   Grafana's anonymous Admin goes before any of it is published
@@ -173,6 +175,11 @@ Unit tests show the code works; an eval set shows the answers do.
 - `HISTORY_KEY` from a Secret before chat-service gets a second replica:
   per-process keys make replicas drop each other's signed replies
 - A shared budget ledger before chat-service gets a second replica.
+- k3s: Traefik disabled and `externalTrafficPolicy: Local` on Envoy's
+  Service, else every visitor shares the node's address and one budget
+- NetworkPolicies: chat-service takes ingress only from Envoy (it trusts
+  `x-client-ip`) and Prometheus; Qdrant, Ollama and the guard only from
+  chat-service and ingest, since none of them authenticate
 
 ## Reasoning
 Observability came first because it is the feedback loop for everything else.

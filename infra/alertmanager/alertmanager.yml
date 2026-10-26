@@ -1,4 +1,4 @@
-# Step 7 picks a real receiver. Until then alerts show at :9093 and in Grafana,
+# No receiver yet: alerts show at :9093 and in Grafana,
 # and are delivered nowhere.
 route:
   receiver: none

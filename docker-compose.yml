@@ -341,7 +341,7 @@ services:
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
-      # Safe only while the port binds to loopback; step 7 must not publish it.
+      # Safe only while the port binds to loopback; never publish it.
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     networks:
       - micro-network

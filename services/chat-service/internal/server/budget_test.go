@@ -174,3 +174,23 @@ func TestWarmupReportsTheBalance(t *testing.T) {
 		t.Errorf("balance = %+v, want 750 remaining", resp.GetBalance())
 	}
 }
+
+// A miss here hides a k3s/Docker NAT that pools every visitor under one key.
+func TestIsSharedAddress(t *testing.T) {
+	for addr, want := range map[string]bool{
+		"172.18.0.1":      true,
+		"10.42.0.7":       true,
+		"192.168.1.10":    true,
+		"127.0.0.1":       true,
+		"::ffff:10.0.0.1": true,
+		"fd00::1":         true,
+		"fe80::1":         true,
+		"203.0.113.9":     false,
+		"2001:db8:1:2::3": false,
+		"not-an-address":  false,
+	} {
+		if got := isSharedAddress(addr); got != want {
+			t.Errorf("isSharedAddress(%q) = %v, want %v", addr, got, want)
+		}
+	}
+}
