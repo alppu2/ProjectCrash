@@ -1,0 +1,41 @@
+groups:
+  - name: chat-cost
+    rules:
+      # NOTE: 350000 is 70% of BUDGET_TOKENS_GLOBAL in services/chat-service/.env.example.
+      # Change both together. Rolling 24h, not the ledger's UTC day: it can
+      # only fire earlier, and it survives a chat-service restart.
+      - alert: TokenSpendPace
+        expr: sum(increase(chat_tokens_total[24h])) > 350000
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Token spend over the last 24h passed 70% of the global daily budget.
+
+      - alert: GlobalBudgetExhausted
+        expr: sum(increase(chat_budget_refusals_total{reason="GLOBAL_BUDGET_EXHAUSTED"}[10m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: The global token budget or visitor cap is spent; new turns are refused until midnight UTC.
+
+      - alert: BudgetRefusalSpike
+        expr: sum(increase(chat_budget_refusals_total[10m])) > 50
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: More than 50 turns refused in 10 minutes; check for abuse or a budget set too low.
+
+      - alert: GuardDegraded
+        expr: |
+          sum(rate(chat_guard_checks_total{verdict="error"}[10m]))
+            / sum(rate(chat_guard_checks_total[10m])) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Over 10% of guard checks are failing; those turns get the fixed unavailable reply.
+
+      # Any timeout means something stalled; a healthy turn ends well inside it.
+      - alert: TurnTimeouts
+        expr: sum(increase(chat_streams_total{status="timeout"}[10m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: Chat turns are hitting CHAT_TURN_TIMEOUT_SECONDS; a provider or dependency is stalling.

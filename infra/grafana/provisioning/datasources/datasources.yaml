@@ -32,3 +32,9 @@ datasources:
         query: '{container=~"order-service|inventory-service"} | json | trace_id = "${__trace.traceId}"'
       serviceMap:
         datasourceUid: prometheus
+  - name: Alertmanager
+    type: alertmanager
+    uid: alertmanager
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus

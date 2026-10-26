@@ -1,0 +1,78 @@
+rule_files:
+  - ../rules/chat.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1h
+    input_series:
+      - series: 'chat_tokens_total{direction="input"}'
+        values: '0+20000x24'
+      - series: 'chat_tokens_total{direction="output"}'
+        values: '0+1000x24'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: TokenSpendPace
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Token spend over the last 24h passed 70% of the global daily budget.
+
+  - interval: 1h
+    input_series:
+      - series: 'chat_tokens_total{direction="input"}'
+        values: '0+1000x24'
+    alert_rule_test:
+      - eval_time: 24h
+        alertname: TokenSpendPace
+        exp_alerts: []
+
+  - interval: 1m
+    input_series:
+      - series: 'chat_budget_refusals_total{reason="GLOBAL_BUDGET_EXHAUSTED"}'
+        values: '0 0 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: GlobalBudgetExhausted
+        exp_alerts:
+          - exp_labels: { severity: critical }
+            exp_annotations:
+              summary: The global token budget or visitor cap is spent; new turns are refused until midnight UTC.
+
+  - interval: 1m
+    input_series:
+      - series: 'chat_budget_refusals_total{reason="BUDGET_EXHAUSTED"}'
+        values: '0+10x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: BudgetRefusalSpike
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: More than 50 turns refused in 10 minutes; check for abuse or a budget set too low.
+
+  - interval: 1m
+    input_series:
+      - series: 'chat_guard_checks_total{verdict="error"}'
+        values: '0+2x40'
+      - series: 'chat_guard_checks_total{verdict="benign"}'
+        values: '0+8x40'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: GuardDegraded
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Over 10% of guard checks are failing; those turns get the fixed unavailable reply.
+
+  - interval: 1m
+    input_series:
+      - series: 'chat_streams_total{status="timeout"}'
+        values: '0 0 1'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: TurnTimeouts
+        exp_alerts:
+          - exp_labels: { severity: warning }
+            exp_annotations:
+              summary: Chat turns are hitting CHAT_TURN_TIMEOUT_SECONDS; a provider or dependency is stalling.

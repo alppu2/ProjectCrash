@@ -225,3 +225,52 @@ func TestEmbedUnreachable(t *testing.T) {
 		t.Error("Embed() error = nil, want an error against a closed server")
 	}
 }
+
+// Hosted embeddings bill per input token. Without this the spend dashboards
+// miss every query and every ingest run.
+func TestEmbedReportsProviderUsage(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decoding request: %v", err)
+			return
+		}
+		type item struct {
+			Embedding []float32 `json:"embedding"`
+			Index     int       `json:"index"`
+		}
+		out := struct {
+			Data  []item `json:"data"`
+			Usage struct {
+				PromptTokens int `json:"prompt_tokens"`
+			} `json:"usage"`
+		}{}
+		for i := range req.Input {
+			out.Data = append(out.Data, item{Embedding: []float32{1, 0}, Index: i})
+		}
+		out.Usage.PromptTokens = 3 * len(req.Input)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(out)
+	}))
+	defer srv.Close()
+
+	e, err := NewOpenAIEmbedder(context.Background(), srv.URL, "m", "", srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAIEmbedder() error = %v", err)
+	}
+	var got int
+	e.OnUsage = func(tokens int) { got += tokens }
+
+	texts := make([]string, EmbedBatchSize+8)
+	for i := range texts {
+		texts[i] = "t"
+	}
+	if _, err := e.Embed(context.Background(), texts); err != nil {
+		t.Fatalf("Embed() error = %v", err)
+	}
+	if want := 3 * len(texts); got != want {
+		t.Errorf("reported %d tokens, want %d summed across both batches", got, want)
+	}
+}

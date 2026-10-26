@@ -51,6 +51,11 @@ var (
 		Buckets: []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5},
 	})
 
+	chatEmbedTokensTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "chat_embed_tokens_total",
+		Help: "Input tokens the embedding provider reported for query embeds. Counted, not charged to any budget; zero if the provider omits usage.",
+	})
+
 	chatCondenseDuration = promauto.NewHistogram(prometheus.HistogramOpts{
 		Name:    "chat_condense_duration_seconds",
 		Help:    "Wall time of folding history into a standalone question. Lands ahead of the first token and would otherwise hide inside chat_time_to_first_token_seconds.",

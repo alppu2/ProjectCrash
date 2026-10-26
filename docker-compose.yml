@@ -257,62 +257,91 @@ services:
   #     retries: 5
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.12.0
     container_name: prometheus
-    user: root
     volumes:
       - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
-      - /var/run/docker.sock:/var/run/docker.sock
+      - ./infra/prometheus/rules:/etc/prometheus/rules
+    # Observability binds to loopback: unauthenticated APIs, reached over an
+    # SSH tunnel on a public host. Envoy :8080 is the only public port.
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      - alertmanager
+      - docker-socket-proxy
+    networks:
+      - micro-network
+      - socket-proxy
+
+  docker-socket-proxy:
+    image: tecnativa/docker-socket-proxy:v0.4.1
+    container_name: docker-socket-proxy
+    # The Docker socket is root on the host. This passes only the reads that
+    # discovery makes: container lists and logs, and networks. Writes stay refused.
+    environment:
+      CONTAINERS: 1
+      NETWORKS: 1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socket-proxy
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: alertmanager
+    volumes:
+      - ./infra/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    ports:
+      - "127.0.0.1:9093:9093"
     networks:
       - micro-network
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.7.2
     container_name: loki
     volumes:
       - ./infra/loki/loki-config.yml:/etc/loki/local-config.yaml
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
     networks:
       - micro-network
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:3.0.0
     container_name: tempo
     volumes:
       - ./infra/tempo/tempo-config.yml:/etc/tempo.yaml
     ports:
-      - "3200:3200"
-      - "4317:4317"
+      - "127.0.0.1:3200:3200"
     command: -config.file=/etc/tempo.yaml
     networks:
       - micro-network
 
   promtail:
-    image: grafana/promtail:latest
+    image: grafana/promtail:3.6.8
     container_name: promtail
     volumes:
       - ./infra/promtail/promtail-config.yml:/etc/promtail/config.yml
-      - /var/run/docker.sock:/var/run/docker.sock
     command: -config.file=/etc/promtail/config.yml
     networks:
       - micro-network
+      - socket-proxy
     depends_on:
       - loki
+      - docker-socket-proxy
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:13.0.2
     container_name: grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning
       - ./infra/grafana/dashboards:/var/lib/grafana/dashboards
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
+      # Safe only while the port binds to loopback; never publish it.
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
     networks:
       - micro-network
@@ -322,7 +351,7 @@ services:
       - tempo
 
   envoy:
-    image: envoyproxy/envoy:v1.25-latest
+    image: envoyproxy/envoy:v1.39.3
     container_name: envoy-proxy
     volumes:
       - ./infra/envoy/envoy.yaml:/etc/envoy/envoy.yaml
@@ -337,6 +366,10 @@ services:
 networks:
   micro-network:
     driver: bridge
+  # Only the discovery clients join: container inspect returns every
+  # container's env, secrets included.
+  socket-proxy:
+    internal: true
 
 volumes:
   # mongo-data:

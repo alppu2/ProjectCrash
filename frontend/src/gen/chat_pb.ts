@@ -203,6 +203,13 @@ export class Done extends Message$1<Done> {
    */
   signature = new Uint8Array(0);
 
+  /**
+   * after this turn was charged
+   *
+   * @generated from field: chat.v1.Balance balance = 5;
+   */
+  balance?: Balance;
+
   constructor(data?: PartialMessage<Done>) {
     super();
     proto3.util.initPartial(data, this);
@@ -215,6 +222,7 @@ export class Done extends Message$1<Done> {
     { no: 2, name: "input_tokens", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 3, name: "output_tokens", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
     { no: 4, name: "signature", kind: "scalar", T: 12 /* ScalarType.BYTES */ },
+    { no: 5, name: "balance", kind: "message", T: Balance },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Done {
@@ -271,6 +279,13 @@ export class WarmupRequest extends Message$1<WarmupRequest> {
  * @generated from message chat.v1.WarmupResponse
  */
 export class WarmupResponse extends Message$1<WarmupResponse> {
+  /**
+   * unset when the visitor's address is unknown
+   *
+   * @generated from field: chat.v1.Balance balance = 1;
+   */
+  balance?: Balance;
+
   constructor(data?: PartialMessage<WarmupResponse>) {
     super();
     proto3.util.initPartial(data, this);
@@ -279,6 +294,7 @@ export class WarmupResponse extends Message$1<WarmupResponse> {
   static readonly runtime: typeof proto3 = proto3;
   static readonly typeName = "chat.v1.WarmupResponse";
   static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "balance", kind: "message", T: Balance },
   ]);
 
   static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): WarmupResponse {
@@ -295,6 +311,59 @@ export class WarmupResponse extends Message$1<WarmupResponse> {
 
   static equals(a: WarmupResponse | PlainMessage<WarmupResponse> | undefined, b: WarmupResponse | PlainMessage<WarmupResponse> | undefined): boolean {
     return proto3.util.equals(WarmupResponse, a, b);
+  }
+}
+
+/**
+ * A visitor's token budget for the current UTC day.
+ *
+ * @generated from message chat.v1.Balance
+ */
+export class Balance extends Message$1<Balance> {
+  /**
+   * @generated from field: int32 tokens_used = 1;
+   */
+  tokensUsed = 0;
+
+  /**
+   * @generated from field: int32 tokens_remaining = 2;
+   */
+  tokensRemaining = 0;
+
+  /**
+   * RFC 3339, UTC
+   *
+   * @generated from field: string resets_at = 3;
+   */
+  resetsAt = "";
+
+  constructor(data?: PartialMessage<Balance>) {
+    super();
+    proto3.util.initPartial(data, this);
+  }
+
+  static readonly runtime: typeof proto3 = proto3;
+  static readonly typeName = "chat.v1.Balance";
+  static readonly fields: FieldList = proto3.util.newFieldList(() => [
+    { no: 1, name: "tokens_used", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 2, name: "tokens_remaining", kind: "scalar", T: 5 /* ScalarType.INT32 */ },
+    { no: 3, name: "resets_at", kind: "scalar", T: 9 /* ScalarType.STRING */ },
+  ]);
+
+  static fromBinary(bytes: Uint8Array, options?: Partial<BinaryReadOptions>): Balance {
+    return new Balance().fromBinary(bytes, options);
+  }
+
+  static fromJson(jsonValue: JsonValue, options?: Partial<JsonReadOptions>): Balance {
+    return new Balance().fromJson(jsonValue, options);
+  }
+
+  static fromJsonString(jsonString: string, options?: Partial<JsonReadOptions>): Balance {
+    return new Balance().fromJsonString(jsonString, options);
+  }
+
+  static equals(a: Balance | PlainMessage<Balance> | undefined, b: Balance | PlainMessage<Balance> | undefined): boolean {
+    return proto3.util.equals(Balance, a, b);
   }
 }
 

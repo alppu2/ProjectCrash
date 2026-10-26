@@ -5,7 +5,7 @@ product integration, and the portfolio that shows them. This file tracks what
 is done, what is next, and why the order is what it is. Per-feature decisions
 live in `docs/superpowers/specs/`.
 
-*Last updated: 2026-10-06*
+*Last updated: 2026-10-17*
 
 ## Status at a glance
 
@@ -16,7 +16,7 @@ live in `docs/superpowers/specs/`.
 | 3 | LLM feature in the product | Done, as a portfolio assistant |
 | 4 | RAG over the portfolio | In progress |
 | 5 | LLM security | Done |
-| 6 | Web security | Not started |
+| 6 | Web security | Done |
 | 7 | Terraform + going live | In progress |
 | 8 | Eval set | Not started |
 | 9 | Resilience patterns | Not started |
@@ -41,7 +41,7 @@ You can't scale what you can't measure.
 
 The order-service → MongoDB → RabbitMQ → inventory-service path is **parked**:
 the frontend no longer drives it, and its services are commented out of
-`docker-compose.yml`. The code, Envoy route and scrape jobs stay, so it can be
+`docker-compose.yml`. The code, Envoy cluster and scrape jobs stay, so it can be
 restored by uncommenting.
 
 ### 3. LLM feature in the product
@@ -76,6 +76,24 @@ something false or embarrassing and screenshots it.
 - promptfoo red-team suite in `evals/redteam/`, baseline 9/9 structural and
   11/16 behaviour on llama3.2:3b; it re-runs on the hosted-provider switch
 
+### 6. Web security
+A per-token API's spend cap is global: one visitor who reaches it takes the
+assistant down for everyone. The budget is per visitor first.
+- Per-visitor and site-wide daily token budgets in chat-service, keyed on the
+  client address Envoy resolves; charged after each turn with the provider's
+  reported usage, condense included; balance returned on `Done` and `Warmup`
+- Embedding tokens counted in `chat_embed_tokens_total`, not charged
+- Concurrent stream caps, refused at once rather than queued
+- `max_tokens` per reply; turns in flight may finish past a budget, so the
+  provider cap sits above it by `MAX_STREAMS_GLOBAL` worst-case turns
+- Envoy v1.39: per-IP rate limit, 64 KB body limit, CORS locked to one origin,
+  parked order route removed
+- Prometheus alert rules through Alertmanager: spend pace, cap hits, refusal
+  spikes, a degraded guard, turn timeouts
+- In memory by choice: a restart resets budgets; the provider cap backs it
+- Observability bound to loopback, the Docker socket behind a read-only
+  proxy, images pinned, Go services running as `nobody`
+
 ## In progress
 
 ### 4. RAG over the portfolio
@@ -101,15 +119,6 @@ Remaining:
 
 ## Next
 
-### 6. Web security
-Classic abuse and cost controls for an unauthenticated endpoint.
-- Per-IP rate limiting at Envoy
-- Concurrency cap on chat streams, rejecting fast instead of queueing on the GPU
-  or on the CPU guard, which withholds turns it cannot check in time
-- `max_tokens` ceiling per turn, and request body limits at Envoy
-- Keep crawlers from triggering `Warmup`
-- Alerts on token spend from the existing token metrics
-
 ### 7. Terraform + going live
 - Done: public-facing frontend restyled with Tailwind v4: full-height chat,
   header with name, role and contact links, light and dark themes
@@ -118,6 +127,22 @@ Classic abuse and cost controls for an unauthenticated endpoint.
 - TLS and a registered domain
 - Env-driven frontend `baseUrl`
 - VM sizing: the guard needs ~620 MB RAM, CPU only, about 0.65 s per check
+- Envoy stays the edge and receives the visitor's address un-NATed, so
+  `xff_num_trusted_hops` stays 0; the CORS origin set to the domain. Check
+  once that chat-service logs a public `x-client-ip`, not the private-address
+  warning
+- An Alertmanager receiver
+- Observability reached over an SSH tunnel, since it binds to loopback;
+  Grafana's anonymous Admin goes before any of it is published
+- A privacy notice (the visitor's IP is held in memory until UTC midnight,
+  chat text is sent to the named LLM provider), and the provider's DPA,
+  transfer basis and training opt-out
+- Ingest run from a clean checkout, so untracked files in allowlisted
+  directories never reach the index
+- CSP, HSTS and `frame-ancestors 'none'` wherever the frontend is served
+- An Envoy overload manager cap on downstream connections
+- Check whether the chosen provider takes `max_tokens` or wants
+  `max_completion_tokens`, as OpenAI's newer models do
 
 ### 8. Eval set
 Unit tests show the code works; an eval set shows the answers do.
@@ -140,6 +165,7 @@ Unit tests show the code works; an eval set shows the answers do.
 
 ### 10. CI/CD
 - GitHub Actions: build → test → push images → deploy
+- Promtail to Grafana Alloy: Promtail is deprecated.
 
 ### 11. Kubernetes
 - Translate `docker-compose.yml` to manifests or Helm charts
@@ -148,6 +174,12 @@ Unit tests show the code works; an eval set shows the answers do.
 - Resource requests/limits, liveness/readiness probes
 - `HISTORY_KEY` from a Secret before chat-service gets a second replica:
   per-process keys make replicas drop each other's signed replies
+- A shared budget ledger before chat-service gets a second replica.
+- k3s: Traefik disabled and `externalTrafficPolicy: Local` on Envoy's
+  Service, else every visitor shares the node's address and one budget
+- NetworkPolicies: chat-service takes ingress only from Envoy (it trusts
+  `x-client-ip`) and Prometheus; Qdrant, Ollama and the guard only from
+  chat-service and ingest, since none of them authenticate
 
 ## Reasoning
 Observability came first because it is the feedback loop for everything else.

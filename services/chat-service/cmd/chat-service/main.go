@@ -13,6 +13,7 @@ import (
 	"google.golang.org/grpc"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/budget"
 	"chat-service/internal/obs"
 	"chat-service/internal/responder"
 	"chat-service/internal/server"
@@ -63,7 +64,18 @@ func main() {
 		slog.Error("failed to build history signer", "error", err)
 		os.Exit(1)
 	}
-	chatpb.RegisterChatServiceServer(grpcServer, server.New(resp, signer))
+	budgetCfg, err := loadBudget()
+	if err != nil {
+		slog.Error("invalid budget configuration", "error", err)
+		os.Exit(1)
+	}
+	ledger := budget.New(budgetCfg, nil)
+	turnTimeout, err := loadTurnTimeout()
+	if err != nil {
+		slog.Error("invalid turn timeout", "error", err)
+		os.Exit(1)
+	}
+	chatpb.RegisterChatServiceServer(grpcServer, server.New(resp, signer, ledger, turnTimeout))
 
 	slog.Info("chat service listening", "port", grpcPort)
 	if err := grpcServer.Serve(lis); err != nil {

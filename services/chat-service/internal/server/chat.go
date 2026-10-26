@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	chatpb "chat-service/chat"
+	"chat-service/internal/budget"
 	"chat-service/internal/history"
 	"chat-service/internal/obs"
 	"chat-service/internal/responder"
@@ -23,13 +25,17 @@ type chatServer struct {
 	responder responder.Responder
 	warmer    responder.Warmer // nil: nothing to warm, always ready
 	signer    *history.Signer
+	ledger    *budget.Ledger
+	// turnTimeout bounds one turn, so a stuck one cannot hold its stream slot.
+	turnTimeout time.Duration
 }
 
-// New returns the ChatService handler for r, signing replies with signer.
-func New(r responder.Responder, signer *history.Signer) chatpb.ChatServiceServer {
+// New returns the ChatService handler for r, signing replies with signer and
+// charging each turn to ledger.
+func New(r responder.Responder, signer *history.Signer, ledger *budget.Ledger, turnTimeout time.Duration) chatpb.ChatServiceServer {
 	// Echo has no Warmer, so the assertion leaves warmer nil.
 	warmer, _ := r.(responder.Warmer)
-	return &chatServer{responder: r, warmer: warmer, signer: signer}
+	return &chatServer{responder: r, warmer: warmer, signer: signer, ledger: ledger, turnTimeout: turnTimeout}
 }
 
 // Chat records exactly one chatStreamsTotal increment and one
@@ -50,6 +56,28 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 		return err
 	}
 
+	key, err := visitorKey(ctx)
+	if err != nil {
+		outcome = "error"
+		obs.LogWithTrace(ctx, slog.Default()).Error("refusing a turn without a usable client address; is Envoy setting x-client-ip?", "error", err)
+		return status.Error(codes.Internal, "the assistant is misconfigured")
+	}
+	release, err := s.ledger.Acquire(key)
+	if err != nil {
+		var refused *budget.RefusedError
+		if errors.As(err, &refused) {
+			outcome = refusalOutcome(refused)
+			return refusalStatus(refused)
+		}
+		outcome = "error"
+		return status.Error(codes.Internal, "budget check failed")
+	}
+	defer release()
+
+	// Bounds how long a slot can be held; release above frees it either way.
+	turnCtx, cancelTurn := context.WithTimeout(ctx, s.turnTimeout)
+	defer cancelTurn()
+
 	msgs, dropped := s.signer.Verify(req.GetMessages())
 	for reason, n := range dropped {
 		chatHistoryDroppedTotal.WithLabelValues(reason).Add(float64(n))
@@ -64,7 +92,7 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 	log.Info("chat stream started", "history_len", len(req.GetMessages()))
 
 	var reply strings.Builder
-	usage, err := s.responder.Stream(ctx, req, func(delta string) error {
+	usage, err := s.responder.Stream(turnCtx, req, func(delta string) error {
 		if err := stream.Send(&chatpb.ChatChunk{
 			Event: &chatpb.ChatChunk_TextDelta{TextDelta: delta},
 		}); err != nil {
@@ -79,8 +107,17 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 	// Before branching on err: a mid-stream failure still consumed the tokens
 	// it reports. Separate metric from the single-site rule above.
 	recordTokens(usage)
+	// Charged on every path: a failed turn still consumed what it reports.
+	balance := s.ledger.Debit(key, int64(usage.InputTokens)+int64(usage.OutputTokens))
 
 	if err != nil {
+		// Our deadline, not the client's: the stream context is still live.
+		if errors.Is(turnCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
+			outcome = "timeout"
+			log.Warn("chat turn hit its deadline", "timeout", s.turnTimeout,
+				"partial_input_tokens", usage.InputTokens, "partial_output_tokens", usage.OutputTokens)
+			return status.Error(codes.DeadlineExceeded, "the reply took too long")
+		}
 		// No Done frame on this path. usage may still be partial — log it.
 		outcome = responder.ClassifyOutcome(err)
 		if outcome == "cancelled" {
@@ -99,6 +136,7 @@ func (s *chatServer) Chat(req *chatpb.ChatRequest, stream grpc.ServerStreamingSe
 			InputTokens:  usage.InputTokens,
 			OutputTokens: usage.OutputTokens,
 			Signature:    s.signer.Sign(question, reply.String()),
+			Balance:      toProtoBalance(balance),
 		}},
 	}); err != nil {
 		outcome = responder.ClassifyOutcome(err)
@@ -119,8 +157,13 @@ func (s *chatServer) Warmup(ctx context.Context, _ *chatpb.WarmupRequest) (*chat
 		chatWarmupDuration.Observe(time.Since(start).Seconds())
 	}()
 
+	resp := &chatpb.WarmupResponse{}
+	if key, err := visitorKey(ctx); err == nil {
+		resp.Balance = toProtoBalance(s.ledger.Balance(key))
+	}
+
 	if s.warmer == nil {
-		return &chatpb.WarmupResponse{}, nil
+		return resp, nil
 	}
 	if err := s.warmer.Warmup(ctx); err != nil {
 		outcome = responder.ClassifyOutcome(err)
@@ -133,7 +176,7 @@ func (s *chatServer) Warmup(ctx context.Context, _ *chatpb.WarmupRequest) (*chat
 		log.Warn("warmup failed", "error", err)
 		return nil, status.Error(codes.Unavailable, "the assistant is unavailable")
 	}
-	return &chatpb.WarmupResponse{}, nil
+	return resp, nil
 }
 
 // The endpoint is unauthenticated, so the client-side MAX_HISTORY cap is
