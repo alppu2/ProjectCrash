@@ -52,31 +52,27 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
-        # required: false keeps the tracked default (RESPONDER=echo) bootable on
-        # a host with no GPU and no pulled model: without the llm profile the
-        # ollama service is not started, and chat-service must not wait for a
-        # container that will never come up. With --profile llm it waits for
-        # healthy, so the first message gets a reply instead of a 404.
+        # Only in the ollama profile. Optional so echo and the hosted provider
+        # never wait for it; with the profile on, the first turn waits for the
+        # pulled model instead of 404ing.
         required: false
       qdrant:
         condition: service_healthy
-        # Same reasoning as ollama: without the llm profile qdrant never
-        # starts, and the echo default must not wait for it.
+        # Only in the llm profile; the echo default must not wait for it.
         required: false
       guard:
         condition: service_healthy
-        # Same reasoning as ollama: the echo default must not wait for it.
+        # Only in the llm profile; the echo default must not wait for it.
         required: false
 
   ollama:
     image: ollama/ollama:0.32.6
     container_name: ollama
-    # Opt-in: `docker compose --profile llm up`. Plain `docker compose up` runs
-    # the echo responder, which needs no model, no 2GB pull and no NVIDIA
-    # runtime — the onboarding path in the README stays a one-liner.
+    # Local development only, never deployed: a free offline model for
+    # `docker compose --profile llm --profile ollama up`. Production generates
+    # and embeds with a hosted provider, which needs no GPU and no 2GB pull.
     profiles:
-      - llm
-      - tools
+      - ollama
     # No published host port: chat-service reaches this over micro-network, and
     # keeping it off the host avoids exposing an unauthenticated inference API.
     # Use `docker compose exec ollama ...` for debugging.
@@ -127,13 +123,13 @@ services:
   qdrant:
     image: qdrant/qdrant:v1.12.4
     container_name: qdrant
-    # Same profile as ollama: retrieval is implied by RESPONDER=llm, and the
-    # tracked default (echo) must still boot with neither container.
+    # Retrieval is implied by RESPONDER=llm whichever provider generates, and
+    # the tracked default (echo) must still boot without it.
     profiles:
       - llm
       - tools
-    # No published host port, for the same reason as ollama: the REST API is
-    # unauthenticated. Use `docker compose exec qdrant ...` to debug.
+    # No published host port: the REST API is unauthenticated. Use
+    # `docker compose exec qdrant ...` to debug.
     volumes:
       - qdrant-storage:/qdrant/storage
     networks:
@@ -174,8 +170,8 @@ services:
   guard:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     container_name: guard
-    # Prompt-injection classifier for RESPONDER=llm. Tied to the llm profile,
-    # not to ollama: it is needed whichever provider generates, hosted included.
+    # Prompt-injection classifier for RESPONDER=llm, needed whichever provider
+    # generates, hosted included.
     profiles:
       - llm
     # Local path written by guard-init; keep the revision in step with it.
@@ -183,7 +179,7 @@ services:
     depends_on:
       guard-init:
         condition: service_completed_successfully
-    # No published host port: an unauthenticated classifier API, like ollama's.
+    # No published host port: an unauthenticated classifier API.
     volumes:
       - guard-models:/data
     networks:
@@ -219,12 +215,14 @@ services:
       - .:/workspace:ro
     networks:
       - micro-network
-    # Both also carry the tools profile: a dependency outside every active
-    # profile is undefined, and compose rejects the whole project. With it,
-    # `run --rm ingest` brings them up on a cold stack.
+    # qdrant also carries the tools profile: a required dependency outside every
+    # active profile makes compose reject the whole project. With it,
+    # `run --rm ingest` brings it up on a cold stack.
     depends_on:
       ollama:
         condition: service_healthy
+        # Waited for only with --profile ollama; otherwise dropped.
+        required: false
       qdrant:
         condition: service_healthy
 

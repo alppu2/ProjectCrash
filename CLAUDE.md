@@ -23,8 +23,10 @@ Stack:
 
 ```bash
 docker compose up --build                              # RESPONDER=echo: no model, no GPU
-docker compose --profile llm up --build -d             # + ollama, qdrant, guard; needs RESPONDER=llm
+docker compose --profile llm up --build -d             # + qdrant, guard; needs RESPONDER=llm and an OpenAI key
+docker compose --profile llm --profile ollama up --build -d   # + ollama: free local model on the GPU, dev only
 docker compose run --rm ingest                         # build/refresh the retrieval index; --full re-embeds all
+                                                       # add --profile ollama when embedding with Ollama
 npx promptfoo eval -c evals/redteam/promptfooconfig.yaml   # red-team suite, stack up with --profile llm
 bash infra/envoy/check-edge.sh                         # edge limits, stack up
 MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W)/infra/prometheus:/p" --entrypoint promtool prom/prometheus:v3.12.0 test rules /p/rules-test/chat.test.yml
