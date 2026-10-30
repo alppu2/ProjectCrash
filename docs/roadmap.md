@@ -134,9 +134,13 @@ Remaining:
 - An Alertmanager receiver
 - Observability reached over an SSH tunnel, since it binds to loopback;
   Grafana's anonymous Admin goes before any of it is published
-- A privacy notice (the visitor's IP is held in memory until UTC midnight,
-  chat text is sent to the named LLM provider), and the provider's DPA,
-  transfer basis and training opt-out
+- Done: GDPR duty to inform without a consent banner, since the basis is
+  legitimate interest and nothing is stored on the device: a sentence in the
+  welcome and a header link to `frontend/public/privacy.html`; Loki deletes
+  after 14 days on a persistent volume, so the notice's 15-day ceiling holds
+- Fill the notice's pending LLM provider and host before launch. Pick both
+  for a DPA, no training on API data, and an EU region or the EU-US Data
+  Privacy Framework
 - Ingest run from a clean checkout, so untracked files in allowlisted
   directories never reach the index
 - CSP, HSTS and `frame-ancestors 'none'` wherever the frontend is served
