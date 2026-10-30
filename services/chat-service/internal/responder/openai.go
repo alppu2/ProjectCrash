@@ -17,8 +17,9 @@ import (
 	chatpb "chat-service/chat"
 )
 
-// Ollama's compose DNS name. Any other provider is LLM_BASE_URL plus
-// LLM_API_KEY, no code change.
+// The local ollama profile, so an unset value fails against a missing
+// container instead of calling a paid API. OpenAI or any other provider is
+// LLM_BASE_URL plus LLM_API_KEY, no code change.
 const (
 	defaultLLMBaseURL = "http://ollama:11434/v1"
 	defaultLLMModel   = "llama3.2:3b"
@@ -28,8 +29,8 @@ const (
 // OpenAI-compatible /chat/completions API.
 type OpenAIResponder struct {
 	BaseURL   string       // no trailing slash
-	Model     string       // e.g. llama3.2:3b
-	APIKey    string       // empty for a local Ollama; sent as a Bearer token when set
+	Model     string       // e.g. gpt-4o-mini
+	APIKey    string       // empty for Ollama; sent as a Bearer token when set
 	MaxTokens int          // per-turn output ceiling; 0 sends none
 	System    string       // grounding prompt; empty sends none
 	Client    *http.Client // injected so tests can point at an httptest server
