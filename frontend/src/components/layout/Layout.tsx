@@ -1,4 +1,5 @@
 import { GitHubIcon, LinkedInIcon } from '../icons';
+import { PRIVACY_HREF } from '../chat/welcome';
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -25,7 +26,15 @@ function Layout({ children }: LayoutProps) {
             Development Team Lead &amp; Senior Full-Stack Engineer
           </p>
         </div>
-        <nav aria-label="Contact" className="flex shrink-0 gap-1">
+        <nav aria-label="Links" className="flex shrink-0 items-center gap-1">
+          <a
+            href={PRIVACY_HREF}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded-lg px-2 py-1 text-sm text-muted transition-colors hover:bg-surface hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            Privacy
+          </a>
           {LINKS.map(({ label, href, Icon }) => (
             <a
               key={label}

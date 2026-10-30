@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Privacy notice · Aleksi Valta</title>
+    <!-- Mirrors the semantic tokens in src/index.css; this page is served
+         as-is, outside the Tailwind build. -->
+    <style>
+      :root {
+        --bg: #ffffff;
+        --surface: #fafafa;
+        --border: #e4e4e7;
+        --fg: #18181b;
+        --muted: #71717a;
+        --accent: #059669;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #09090b;
+          --surface: #18181b;
+          --border: #27272a;
+          --fg: #f4f4f5;
+          --muted: #a1a1aa;
+          --accent: #10b981;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+      }
+      main {
+        max-width: 48rem;
+        margin: 0 auto;
+        padding: 1rem 1rem 3rem;
+      }
+      header {
+        border-bottom: 1px solid var(--border);
+        padding-bottom: 1rem;
+        margin-bottom: 1.5rem;
+      }
+      h1 {
+        font-size: 1.25rem;
+        letter-spacing: -0.01em;
+        margin: 0;
+      }
+      h2 {
+        font-size: 1rem;
+        margin: 2rem 0 0.5rem;
+      }
+      a {
+        color: var(--accent);
+        text-underline-offset: 2px;
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 0.875rem;
+      }
+      .pending {
+        background: var(--surface);
+        border: 1px dashed var(--border);
+        border-radius: 0.375rem;
+        padding: 0 0.25rem;
+      }
+      ul {
+        padding-left: 1.25rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Privacy notice</h1>
+        <p class="muted">Last updated 30 October 2026</p>
+      </header>
+
+      <p>
+        This site is a portfolio with a chat assistant that answers questions
+        about Aleksi Valta's background. It collects as little as it can to run
+        that chat and keep it from being abused. It sets no cookies, stores
+        nothing in your browser and runs no analytics.
+      </p>
+
+      <h2>Who is responsible</h2>
+      <p>
+        Aleksi Valta, Finland, is the controller of the personal data described
+        here. Contact:
+        <a href="mailto:Valta93@hotmail.com">Valta93@hotmail.com</a>.
+      </p>
+
+      <h2>What is collected and why</h2>
+      <ul>
+        <li>
+          <strong>Your IP address.</strong> Used to rate-limit requests and to
+          cap how much of the chat one visitor can use per day, so the site
+          stays available and its costs stay bounded. The legal basis is
+          legitimate interest in keeping the service secure and available (GDPR
+          Art. 6(1)(f)).
+        </li>
+        <li>
+          <strong>Your chat messages.</strong> Each message you send, together
+          with the conversation so far, is processed on this site's server to
+          find relevant material, checked by a classifier for prompt-injection
+          attempts, and sent to the LLM provider below to generate the reply.
+          The legal basis is legitimate interest in answering the question you
+          asked (Art. 6(1)(f)).
+        </li>
+      </ul>
+      <p>
+        Please do not put sensitive personal information, about yourself or
+        anyone else, into the chat.
+      </p>
+
+      <h2>How long it is kept</h2>
+      <ul>
+        <li>
+          Your IP address and the chat usage counted against it are held only in
+          the server's memory and discarded at midnight UTC. They are never
+          written to disk or to logs.
+        </li>
+        <li>
+          This site does not store your messages. The conversation lives in your
+          browser tab and is gone when you close or reload it. The LLM
+          provider's retention is described below.
+        </li>
+        <li>
+          Technical logs, metrics and traces, which contain neither your IP
+          address nor your messages, are deleted after at most 15 days.
+        </li>
+      </ul>
+
+      <h2>Who else processes it</h2>
+      <!-- Launch blocker: fill in once the provider and host are chosen. -->
+      <ul>
+        <li>
+          <strong>LLM provider:</strong>
+          <span class="pending">to be named before launch</span>. Receives your
+          messages to generate replies. Transfer basis:
+          <span class="pending">to be named</span>. Use of your messages for
+          training: <span class="pending">to be named</span>.
+        </li>
+        <li>
+          <strong>Hosting provider:</strong>
+          <span class="pending">to be named before launch</span>. Runs the
+          server, and so carries your IP address and messages over its network.
+        </li>
+      </ul>
+
+      <h2>Your rights</h2>
+      <p>
+        You have the right to access, rectify and erase your personal data, to
+        restrict its processing, and to object to processing based on legitimate
+        interest. Because your IP address is discarded daily and your messages
+        are not stored here, there is usually nothing left to retrieve by the
+        time you ask, but you can always write to the address above.
+      </p>
+      <p>
+        You can also lodge a complaint with a supervisory authority. In Finland
+        that is the Data Protection Ombudsman (<a
+          href="https://tietosuoja.fi/en"
+          target="_blank"
+          rel="noreferrer"
+          >tietosuoja.fi</a
+        >).
+      </p>
+    </main>
+  </body>
+</html>

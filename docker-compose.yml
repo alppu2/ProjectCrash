@@ -301,6 +301,7 @@ services:
     container_name: loki
     volumes:
       - ./infra/loki/loki-config.yml:/etc/loki/local-config.yaml
+      - loki-data:/loki
     ports:
       - "127.0.0.1:3100:3100"
     command: -config.file=/etc/loki/local-config.yaml
@@ -376,3 +377,4 @@ volumes:
   ollama-models:
   qdrant-storage:
   guard-models:
+  loki-data:
