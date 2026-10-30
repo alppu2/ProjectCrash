@@ -3,6 +3,7 @@ import useChatStream from './useChatStream';
 import useWarmup, { type WarmupStatus } from './useWarmup';
 import { Role } from '../../gen/chat_pb';
 import { ArrowUpIcon, StopIcon } from '../icons';
+import { PRIVACY_HREF, WELCOME_MESSAGE } from './welcome';
 
 const BUBBLE = 'max-w-[85%] whitespace-pre-wrap rounded-2xl px-4 py-2.5';
 const ASSISTANT_BUBBLE = `${BUBBLE} self-start rounded-bl-sm border border-border bg-surface`;
@@ -108,7 +109,24 @@ function ChatPanel() {
             <span role="status">{PLACEHOLDER.warming}</span>
           </li>
         )}
-        {welcome && <li className={ASSISTANT_BUBBLE}>{welcome}</li>}
+        {welcome && (
+          <li className={ASSISTANT_BUBBLE}>
+            {welcome}
+            {welcome === WELCOME_MESSAGE && (
+              <>
+                {' '}
+                <a
+                  href={PRIVACY_HREF}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-accent underline underline-offset-2"
+                >
+                  Privacy notice
+                </a>
+              </>
+            )}
+          </li>
+        )}
         {messages.map((m, i) => {
           const live = streaming && i === messages.length - 1;
           if (live && !m.content) {

@@ -52,6 +52,24 @@ describe('ChatPanel', () => {
     expect(await screen.findByText(/^Hi,/)).toBeTruthy();
   });
 
+  // The welcome is where a visitor learns what happens to their messages and
+  // IP before sending one. The conversation lives only in this tab, so
+  // opening the notice in place would throw it away.
+  it('links the privacy notice from the welcome in a new tab', async () => {
+    mockWarmup.mockResolvedValue(new WarmupResponse());
+
+    render(<ChatPanel />);
+
+    // The link follows the paced welcome, which outlasts findBy's 1s default.
+    const link = (await screen.findByRole(
+      'link',
+      { name: 'Privacy notice' },
+      { timeout: 6000 }
+    )) as HTMLAnchorElement;
+    expect(link.getAttribute('href')).toBe('/privacy.html');
+    expect(link.target).toBe('_blank');
+  }, 10_000);
+
   // The welcome is page copy. If it leaked into history the model would
   // treat it as its own prior turn.
   it('sends only the user turn after the welcome', async () => {
