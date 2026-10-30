@@ -143,6 +143,8 @@ Remaining:
   legitimate interest and nothing is stored on the device: a sentence in the
   welcome and a header link to `frontend/public/privacy.html`; Loki deletes
   after 14 days on a persistent volume, so the notice's 15-day ceiling holds
+- Execute OpenAI's data processing addendum for the production project, then
+  name it in the privacy notice
 - The notice names OpenAI as the LLM provider; fill the pending host before
   launch, picked for a DPA and an EU region or the EU-US Data Privacy
   Framework
