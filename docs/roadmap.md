@@ -5,7 +5,7 @@ product integration, and the portfolio that shows them. This file tracks what
 is done, what is next, and why the order is what it is. Per-feature decisions
 live in `docs/superpowers/specs/`.
 
-*Last updated: 2026-10-17*
+*Last updated: 2026-10-30*
 
 ## Status at a glance
 
@@ -54,7 +54,8 @@ about Aleksi's background and about this stack.
   apply because the endpoint is unauthenticated
 - `Responder` seam with an echo stub (zero-cost load tests) and
   `OpenAIResponder` for any OpenAI-compatible provider
-- Local Ollama (`llama3.2:3b`) behind the opt-in `llm` compose profile
+- Local Ollama (`llama3.2:3b`), now the opt-in `ollama` compose profile for
+  offline development
 - Metrics: input/output tokens, time to first token, classified provider errors
 
 Dropped with the pivot: ticket classification, structured outputs, the queue
@@ -74,7 +75,7 @@ something false or embarrassing and screenshots it.
   no role-play), honest AI-assisted attribution
 - Specs and CLAUDE.md out of the index: historical records read as current
 - promptfoo red-team suite in `evals/redteam/`, baseline 9/9 structural and
-  11/16 behaviour on llama3.2:3b; it re-runs on the hosted-provider switch
+  11/16 behaviour on llama3.2:3b, 16/16 on gpt-4o-mini
 
 ### 6. Web security
 A per-token API's spend cap is global: one visitor who reaches it takes the
@@ -123,7 +124,11 @@ Remaining:
 - Done: public-facing frontend restyled with Tailwind v4: full-height chat,
   header with name, role and contact links, light and dark themes
 - Terraform for the host, DNS and firewall
-- Hosted OpenAI-compatible provider in place of Ollama, with a spend cap
+- Done: OpenAI (`gpt-4o-mini`, `text-embedding-3-small`) in place of Ollama,
+  which stays as an opt-in local profile; the dev project has a prepaid
+  balance, the production project needs its own cap
+- Re-ingest and re-run the red-team suite, judged slice included, against
+  production
 - TLS and a registered domain
 - Env-driven frontend `baseUrl`
 - VM sizing: the guard needs ~620 MB RAM, CPU only, about 0.65 s per check
@@ -138,9 +143,19 @@ Remaining:
   legitimate interest and nothing is stored on the device: a sentence in the
   welcome and a header link to `frontend/public/privacy.html`; Loki deletes
   after 14 days on a persistent volume, so the notice's 15-day ceiling holds
-- Fill the notice's pending LLM provider and host before launch. Pick both
-  for a DPA, no training on API data, and an EU region or the EU-US Data
-  Privacy Framework
+- Execute OpenAI's data processing addendum for the production project, then
+  name it in the privacy notice
+- The notice names OpenAI as the LLM provider; fill the pending host before
+  launch, picked for a DPA and an EU region or the EU-US Data Privacy
+  Framework
+- Production keys from Kubernetes Secrets: `LLM_API_KEY`, `EMBED_API_KEY`,
+  `HISTORY_KEY`, `HF_TOKEN`. The OpenAI key belongs to a production-only
+  project with its own monthly budget, separate from the dev key
+- No Ollama in production: generation and embeddings are OpenAI's, and the
+  server has no GPU
+- Initial ingest into the server's empty Qdrant volume, after
+  `corpus/background.md` is completed. `corpus/` is gitignored, so it reaches
+  the server by a deliberate path, not git
 - Ingest run from a clean checkout, so untracked files in allowlisted
   directories never reach the index
 - CSP, HSTS and `frame-ancestors 'none'` wherever the frontend is served
@@ -150,6 +165,10 @@ Remaining:
 
 ### 8. Eval set
 Unit tests show the code works; an eval set shows the answers do.
+- Claims about the build: gpt-4o-mini listed Terraform, Kubernetes and
+  MongoDB as in use, reading roadmap plans and parked code as current
+- Questions with no matching sources: at a too-high retrieval floor it
+  invented an implementation rather than saying it found nothing
 - Golden questions a recruiter would ask, each with its expected source chunk
   and the facts the answer must contain
 - Unanswerable questions whose correct reply is a decline, plus the red-team
@@ -182,7 +201,7 @@ Unit tests show the code works; an eval set shows the answers do.
 - k3s: Traefik disabled and `externalTrafficPolicy: Local` on Envoy's
   Service, else every visitor shares the node's address and one budget
 - NetworkPolicies: chat-service takes ingress only from Envoy (it trusts
-  `x-client-ip`) and Prometheus; Qdrant, Ollama and the guard only from
+  `x-client-ip`) and Prometheus; Qdrant and the guard only from
   chat-service and ingest, since none of them authenticate
 
 ## Reasoning

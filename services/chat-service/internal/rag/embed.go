@@ -27,12 +27,12 @@ type Embedder interface {
 	ModelID() string
 }
 
-// OpenAIEmbedder speaks the OpenAI-compatible /embeddings API. Locally that is
-// Ollama; a hosted embedder is a base URL and a key, no code change.
+// OpenAIEmbedder speaks the OpenAI-compatible /embeddings API: OpenAI in
+// deployment, Ollama in the local profile. Switching is a base URL and a key.
 type OpenAIEmbedder struct {
 	BaseURL string // no trailing slash
 	Model   string
-	APIKey  string // empty for a local Ollama; sent as a Bearer token when set
+	APIKey  string // empty for Ollama; sent as a Bearer token when set
 	Client  *http.Client
 	// OnUsage receives each request's provider-reported input tokens; nil
 	// ignores them. Called concurrently when Embed is.

@@ -14,10 +14,12 @@ type Warmer interface {
 }
 
 // Below compose's OLLAMA_KEEP_ALIVE (30m), so a fresh entry never vouches for
-// a model Ollama has already unloaded.
+// a model Ollama has already unloaded. For a hosted provider it bounds how
+// stale a key and reachability check may be.
 const warmFreshness = 20 * time.Minute
 
-// Covers a cold VRAM load (~33s) with headroom, like newLLMClient's header wait.
+// Covers the worst case, a cold Ollama VRAM load (~33s), with headroom, like
+// newLLMClient's header wait.
 const warmTimeout = 120 * time.Second
 
 type warmFlight struct {
