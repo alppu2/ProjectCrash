@@ -5,7 +5,7 @@ product integration, and the portfolio that shows them. This file tracks what
 is done, what is next, and why the order is what it is. Per-feature decisions
 live in `docs/superpowers/specs/`.
 
-*Last updated: 2026-10-17*
+*Last updated: 2026-10-30*
 
 ## Status at a glance
 
@@ -54,7 +54,8 @@ about Aleksi's background and about this stack.
   apply because the endpoint is unauthenticated
 - `Responder` seam with an echo stub (zero-cost load tests) and
   `OpenAIResponder` for any OpenAI-compatible provider
-- Local Ollama (`llama3.2:3b`) behind the opt-in `llm` compose profile
+- Local Ollama (`llama3.2:3b`), now the opt-in `ollama` compose profile for
+  offline development
 - Metrics: input/output tokens, time to first token, classified provider errors
 
 Dropped with the pivot: ticket classification, structured outputs, the queue
@@ -138,9 +139,17 @@ Remaining:
   legitimate interest and nothing is stored on the device: a sentence in the
   welcome and a header link to `frontend/public/privacy.html`; Loki deletes
   after 14 days on a persistent volume, so the notice's 15-day ceiling holds
-- Fill the notice's pending LLM provider and host before launch. Pick both
-  for a DPA, no training on API data, and an EU region or the EU-US Data
-  Privacy Framework
+- The notice names OpenAI as the LLM provider; fill the pending host before
+  launch, picked for a DPA and an EU region or the EU-US Data Privacy
+  Framework
+- Production keys from Kubernetes Secrets: `LLM_API_KEY`, `EMBED_API_KEY`,
+  `HISTORY_KEY`, `HF_TOKEN`. The OpenAI key belongs to a production-only
+  project with its own monthly budget, separate from the dev key
+- No Ollama in production: generation and embeddings are OpenAI's, and the
+  server has no GPU
+- Initial ingest into the server's empty Qdrant volume, after
+  `corpus/background.md` is completed. `corpus/` is gitignored, so it reaches
+  the server by a deliberate path, not git
 - Ingest run from a clean checkout, so untracked files in allowlisted
   directories never reach the index
 - CSP, HSTS and `frame-ancestors 'none'` wherever the frontend is served
@@ -182,7 +191,7 @@ Unit tests show the code works; an eval set shows the answers do.
 - k3s: Traefik disabled and `externalTrafficPolicy: Local` on Envoy's
   Service, else every visitor shares the node's address and one budget
 - NetworkPolicies: chat-service takes ingress only from Envoy (it trusts
-  `x-client-ip`) and Prometheus; Qdrant, Ollama and the guard only from
+  `x-client-ip`) and Prometheus; Qdrant and the guard only from
   chat-service and ingest, since none of them authenticate
 
 ## Reasoning
