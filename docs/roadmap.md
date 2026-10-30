@@ -75,7 +75,7 @@ something false or embarrassing and screenshots it.
   no role-play), honest AI-assisted attribution
 - Specs and CLAUDE.md out of the index: historical records read as current
 - promptfoo red-team suite in `evals/redteam/`, baseline 9/9 structural and
-  11/16 behaviour on llama3.2:3b; it re-runs on the hosted-provider switch
+  11/16 behaviour on llama3.2:3b, 16/16 on gpt-4o-mini
 
 ### 6. Web security
 A per-token API's spend cap is global: one visitor who reaches it takes the
@@ -124,7 +124,11 @@ Remaining:
 - Done: public-facing frontend restyled with Tailwind v4: full-height chat,
   header with name, role and contact links, light and dark themes
 - Terraform for the host, DNS and firewall
-- Hosted OpenAI-compatible provider in place of Ollama, with a spend cap
+- Done: OpenAI (`gpt-4o-mini`, `text-embedding-3-small`) in place of Ollama,
+  which stays as an opt-in local profile; the dev project has a prepaid
+  balance, the production project needs its own cap
+- Re-ingest and re-run the red-team suite, judged slice included, against
+  production
 - TLS and a registered domain
 - Env-driven frontend `baseUrl`
 - VM sizing: the guard needs ~620 MB RAM, CPU only, about 0.65 s per check
@@ -159,6 +163,10 @@ Remaining:
 
 ### 8. Eval set
 Unit tests show the code works; an eval set shows the answers do.
+- Claims about the build: gpt-4o-mini listed Terraform, Kubernetes and
+  MongoDB as in use, reading roadmap plans and parked code as current
+- Questions with no matching sources: at a too-high retrieval floor it
+  invented an implementation rather than saying it found nothing
 - Golden questions a recruiter would ask, each with its expected source chunk
   and the facts the answer must contain
 - Unanswerable questions whose correct reply is a decline, plus the red-team
